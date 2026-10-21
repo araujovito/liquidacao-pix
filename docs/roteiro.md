@@ -9,12 +9,12 @@ O estado de cada item fica marcado aqui e resumido na `MEMORIA_TECNICA.md`.
 - [ ] CI no GitHub Actions (gofmt, vet, golangci-lint, testes com `-race`)
 
 ## Fase 1 — Livro-razão e liquidação
-- [ ] Domínio: dinheiro em centavos, conta, transferência, lançamento
-- [ ] Esquema: contas, transferências, lançamentos só de inserção, conta de liquidez
-- [ ] Caso de uso `Liquidar`: trava em ordem, idempotente, rejeita sem saldo
-- [ ] Teste de concorrência: milhares de transferências cruzadas, nenhum saldo
+- [x] Domínio: dinheiro em centavos, conta, transferência, lançamento
+- [x] Esquema: contas, transferências, lançamentos só de inserção, conta de liquidez
+- [x] Caso de uso `Liquidar`: trava em ordem, idempotente, rejeita sem saldo
+- [x] Teste de concorrência: milhares de transferências cruzadas, nenhum saldo
       negativo, soma global zero
-- [ ] Conciliação (soma global, saldo × lançamentos, pares de lançamentos)
+- [x] Conciliação (soma global, saldo × lançamentos, pares de lançamentos)
 
 ## Fase 2 — API de ingestão
 - [ ] `POST /transferencias` com transferência + outbox na mesma transação
