@@ -4,9 +4,9 @@ Cada fase termina com algo que roda e um teste que prova a propriedade da fase.
 O estado de cada item fica marcado aqui e resumido na `MEMORIA_TECNICA.md`.
 
 ## Fase 0 — Esqueleto
-- [ ] Módulo Go, `Makefile`, `docker-compose` com Postgres e Redis
-- [ ] Migrações SQL e um comando para aplicá-las
-- [ ] CI no GitHub Actions (gofmt, vet, golangci-lint, testes com `-race`)
+- [x] Módulo Go, `Makefile`, `docker-compose` com Postgres e Redis
+- [x] Migrações SQL e um comando para aplicá-las
+- [x] CI no GitHub Actions (gofmt, vet, golangci-lint, testes com `-race`)
 
 ## Fase 1 — Livro-razão e liquidação
 - [x] Domínio: dinheiro em centavos, conta, transferência, lançamento
@@ -17,10 +17,10 @@ O estado de cada item fica marcado aqui e resumido na `MEMORIA_TECNICA.md`.
 - [x] Conciliação (soma global, saldo × lançamentos, pares de lançamentos)
 
 ## Fase 2 — API de ingestão
-- [ ] `POST /transferencias` com transferência + outbox na mesma transação
-- [ ] Idempotência por `end_to_end_id` (mesmo pedido → mesmo resultado; conteúdo diferente → 409)
-- [ ] `GET /transferencias/{id}`
-- [ ] `GET /saude` e encerramento gracioso
+- [x] `POST /transferencias` com transferência + outbox na mesma transação
+- [x] Idempotência por `end_to_end_id` (mesmo pedido → mesmo resultado; conteúdo diferente → 409)
+- [x] `GET /transferencias/{id}`
+- [x] `GET /saude` e encerramento gracioso
 
 ## Fase 3 — Fila resiliente
 - [ ] Relay da outbox para Redis Stream (`SKIP LOCKED`)

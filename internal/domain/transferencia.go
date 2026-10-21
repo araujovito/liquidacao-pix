@@ -14,11 +14,15 @@ import (
 type Centavos int64
 
 func (c Centavos) String() string {
+	// Não negamos c diretamente: -math.MinInt64 estoura e continua negativo.
+	// A magnitude em uint64 cobre todo o domínio de Centavos.
 	sinal := ""
+	magnitude := uint64(c)
 	if c < 0 {
-		sinal, c = "-", -c
+		sinal = "-"
+		magnitude = uint64(-(c + 1)) + 1
 	}
-	return fmt.Sprintf("%sR$ %d,%02d", sinal, c/100, c%100)
+	return fmt.Sprintf("%sR$ %d,%02d", sinal, magnitude/100, magnitude%100)
 }
 
 // Status de uma transferência. Só PENDENTE pode mudar; os outros são finais.

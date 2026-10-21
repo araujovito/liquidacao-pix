@@ -10,8 +10,9 @@ tentado. É atualizado no mesmo commit da mudança que descreve.
 
 ## Estado atual
 
-Fase 1 concluída (livro-razão, liquidação idempotente, conciliação, teste de
-concorrência). Próximo passo: fase 2, API de ingestão com outbox.
+Fases 0, 1 e 2 concluídas: livro-razão, liquidação idempotente, conciliação,
+API de ingestão com outbox. As transferências aceitas ficam `PENDENTE` e
+acumulam na outbox: **ainda não há relay nem worker** (fase 3).
 
 ## Ambiente
 
@@ -26,9 +27,21 @@ concorrência). Próximo passo: fase 2, API de ingestão com outbox.
 ```sh
 make infra          # Postgres e Redis via docker compose
 make migrar         # aplica db/migrations
+make semear         # cliente-0001@pix … cliente-0100@pix com R$ 10.000 cada
+make api            # API em :8080 (PORTA muda)
 make teste          # unidade + integração (Testcontainers sobe contêineres próprios)
 make teste-unidade  # só o que roda sem Docker (-short)
 make lint           # gofmt, go vet, golangci-lint
+```
+
+Exemplo de pedido:
+
+```sh
+curl -i -X POST localhost:8080/transferencias -d '{
+  "end_to_end_id": "E1234567820261021200000000000001",
+  "chave_pagador": "cliente-0001@pix",
+  "chave_recebedor": "cliente-0002@pix",
+  "valor_centavos": 2500}'
 ```
 
 Os testes de integração não usam o Postgres do `make infra`: cada pacote sobe
@@ -46,8 +59,24 @@ o seu contêiner e cada teste recebe um banco novo e migrado
 | 5 | Entrega "pelo menos uma vez" + idempotência no consumo | "Exatamente uma vez" na fila não existe; no banco, sob trava, sim |
 | 6 | Livro-razão de partidas dobradas, valores em centavos `bigint` | Conservação do dinheiro verificável; sem erro de arredondamento |
 | 7 | Contas travadas em ordem crescente de id | Evita *deadlock* entre transferências cruzadas |
+| 8 | Erros HTTP em *problem details* (RFC 9457) | Cliente distingue casos por `type` estável |
+| 9 | Conta técnica invisível para a API | Ela pode ficar negativa; debitá-la criaria dinheiro |
 
 ## Histórico
+
+### 2026-10-21 — API de ingestão
+- `POST /transferencias`: chaves PIX → ids, validação, transferência + outbox
+  na mesma transação, 202 com `Location`. Repetição idêntica devolve o mesmo
+  corpo com `Idempotent-Replayed: true`; mesma chave com outro conteúdo → 409.
+- Teste com 20 pedidos simultâneos iguais: um id, uma linha na outbox.
+- Furo encontrado e fechado durante a escrita: a chave `liquidez@sistema`
+  era aceita como pagador, e a conta de liquidez pode ficar negativa, ou
+  seja, qualquer cliente criaria dinheiro. `IDDeContaCliente` ignora contas
+  técnicas; há teste.
+- Prazos no `http.Server` (sem eles um cliente lento segura a conexão) e
+  encerramento gracioso de 15 s no SIGTERM.
+- Status de erro: 400 JSON malformado/campo desconhecido, 413 corpo > 4 KiB,
+  422 chave desconhecida ou regra de domínio, 409 conflito.
 
 ### 2026-10-21 — liquidação, conciliação e teste de concorrência
 - `usecase.Liquidar`: trava a transferência, depois as contas em ordem

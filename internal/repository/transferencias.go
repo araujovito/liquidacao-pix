@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -48,6 +49,19 @@ func (r *Repositorio) IDDaChave(ctx context.Context, chavePix string) (int64, er
 	return id, err
 }
 
+// IDDeContaCliente devolve o id da conta de cliente dona da chave. Contas
+// técnicas contam como inexistentes: pela API ninguém debita a conta de
+// liquidez, que é a única que pode ficar negativa (criaria dinheiro do nada).
+func (r *Repositorio) IDDeContaCliente(ctx context.Context, chavePix string) (int64, error) {
+	var id int64
+	err := r.pool.QueryRow(ctx,
+		`SELECT id FROM contas WHERE chave_pix = $1 AND NOT tecnica`, chavePix).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrNaoEncontrada
+	}
+	return id, err
+}
+
 // SaldoDaConta lê o saldo projetado (sem trava).
 func (r *Repositorio) SaldoDaConta(ctx context.Context, id int64) (domain.Centavos, error) {
 	var s int64
@@ -58,9 +72,26 @@ func (r *Repositorio) SaldoDaConta(ctx context.Context, id int64) (domain.Centav
 	return domain.Centavos(s), err
 }
 
-// CriarTransferencia grava o pedido como PENDENTE.
+// CriarTransferencia grava o pedido como PENDENTE, sem outbox. Usado por
+// quem liquida na hora (aportes, testes); pedidos de clientes passam por
+// CriarComOutbox.
 func (r *Repositorio) CriarTransferencia(ctx context.Context, t domain.Transferencia) (domain.Transferencia, error) {
 	return inserirTransferencia(ctx, r.pool, t)
+}
+
+// CriarComOutbox grava a transferência PENDENTE e a linha da outbox na mesma
+// transação: ou o pedido existe e vai ser publicado, ou nada foi gravado.
+func (r *Repositorio) CriarComOutbox(ctx context.Context, t domain.Transferencia) (domain.Transferencia, error) {
+	var criada domain.Transferencia
+	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		var err error
+		if criada, err = inserirTransferencia(ctx, tx, t); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO outbox (transferencia_id) VALUES ($1)`, criada.ID)
+		return err
+	})
+	return criada, err
 }
 
 type executor interface {
@@ -81,11 +112,18 @@ func inserirTransferencia(ctx context.Context, db executor, t domain.Transferenc
 	return criada, err
 }
 
-// BuscarTransferencia lê uma transferência pelo id.
+// BuscarTransferencia lê uma transferência pelo id. Um id que não é UUID é
+// tratado como inexistente, sem chegar ao banco.
 func (r *Repositorio) BuscarTransferencia(ctx context.Context, id string) (domain.Transferencia, error) {
+	if uuid.Validate(id) != nil {
+		return domain.Transferencia{}, ErrNaoEncontrada
+	}
 	return lerTransferencia(r.pool.QueryRow(ctx,
 		`SELECT `+colunasTransferencia+` FROM transferencias WHERE id = $1`, id))
 }
+
+// Ping confirma que o banco responde (usado pela rota de saúde).
+func (r *Repositorio) Ping(ctx context.Context) error { return r.pool.Ping(ctx) }
 
 // BuscarPorEndToEnd lê uma transferência pela chave de idempotência.
 func (r *Repositorio) BuscarPorEndToEnd(ctx context.Context, e2e string) (domain.Transferencia, error) {
