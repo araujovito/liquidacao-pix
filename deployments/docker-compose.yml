@@ -1,0 +1,32 @@
+name: liquidacao-pix
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pix
+      POSTGRES_PASSWORD: pix # senha de desenvolvimento
+      POSTGRES_DB: pix
+    ports: ["5432:5432"]
+    volumes: [postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pix -d pix"]
+      interval: 2s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    # appendonly: sem isso, um reinício do Redis apaga o stream e as mensagens
+    # ainda não confirmadas. A outbox no Postgres cobriria a perda, mas o
+    # relay teria de republicar tudo; com AOF o Redis volta com o stream.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports: ["6379:6379"]
+    volumes: [redis:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
+
+volumes:
+  postgres:
+  redis:
