@@ -1,0 +1,8 @@
+version: "2"
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gosec
+  # misspell fica de fora: só conhece inglês, e código e comentários são em português.

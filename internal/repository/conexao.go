@@ -4,21 +4,20 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// URLPadrao aponta para o Postgres do docker-compose de desenvolvimento.
-const URLPadrao = "postgres://pix:pix@localhost:5432/pix?sslmode=disable"
-
-// URLDoAmbiente lê DATABASE_URL e cai no padrão de desenvolvimento.
-func URLDoAmbiente() string {
+// URLDoAmbiente lê DATABASE_URL. Não há valor padrão no código, para que
+// nenhuma credencial fique no binário; o Makefile define a de desenvolvimento.
+func URLDoAmbiente() (string, error) {
 	if u := os.Getenv("DATABASE_URL"); u != "" {
-		return u
+		return u, nil
 	}
-	return URLPadrao
+	return "", errors.New("DATABASE_URL não definida")
 }
 
 // Conectar abre o pool e confirma que o banco responde.

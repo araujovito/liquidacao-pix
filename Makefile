@@ -1,5 +1,9 @@
 COMPOSE := docker compose -f deployments/docker-compose.yml
 
+# Credenciais só de desenvolvimento (as do docker-compose). Em outro ambiente,
+# defina DATABASE_URL antes de chamar o make.
+export DATABASE_URL ?= postgres://pix:pix@localhost:5432/pix?sslmode=disable
+
 .PHONY: infra infra-parar migrar teste teste-unidade lint fmt
 
 infra: ## sobe Postgres e Redis e espera ficarem saudáveis
@@ -20,6 +24,7 @@ teste-unidade: ## só os testes que não precisam de Docker
 lint:
 	gofmt -l . | (! grep .)
 	go vet ./...
+	golangci-lint run ./...
 
 fmt:
 	gofmt -w .

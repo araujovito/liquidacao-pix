@@ -12,7 +12,12 @@ import (
 
 func main() {
 	ctx := context.Background()
-	pool, err := repository.Conectar(ctx, repository.URLDoAmbiente())
+	url, err := repository.URLDoAmbiente()
+	if err != nil {
+		slog.Error("configuração", "erro", err)
+		os.Exit(1)
+	}
+	pool, err := repository.Conectar(ctx, url)
 	if err != nil {
 		slog.Error("conectar", "erro", err)
 		os.Exit(1)
