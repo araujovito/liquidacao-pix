@@ -5,13 +5,16 @@ COMPOSE := docker compose -f deployments/docker-compose.yml
 export DATABASE_URL ?= postgres://pix:pix@localhost:5432/pix?sslmode=disable
 export REDIS_URL ?= redis://localhost:6379/0
 
-.PHONY: demo testar-demo testar-alertas observabilidade caos carga-pico carga-sustentada infra sistema infra-parar migrar semear api relay worker teste teste-unidade lint fmt
+.PHONY: lint-openapi demo testar-demo testar-alertas observabilidade caos carga-pico carga-sustentada infra sistema infra-parar migrar semear api relay worker teste teste-unidade lint fmt
 
 infra: ## sobe Postgres e Redis e espera ficarem saudáveis
 	$(COMPOSE) up -d --wait postgres redis
 
 sistema: ## tudo em contêineres: postgres, redis, migrar, api, relay, worker
 	$(COMPOSE) --profile sistema up -d --build --wait
+
+lint-openapi: ## valida o contrato docs/openapi.yaml com o redocly (versão fixa; regras desligadas em .redocly.yaml, com motivo)
+	docker run --rm -v "$(CURDIR):/work:ro" -w /work redocly/cli:2.67.1 lint --config .redocly.yaml docs/openapi.yaml
 
 demo: ## demonstração de ponta a ponta em contêineres: transfere, derruba o worker, recupera e concilia
 	COMPOSE="$(COMPOSE) --profile sistema" tests/demo/demo.sh

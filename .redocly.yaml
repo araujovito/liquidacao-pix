@@ -1,0 +1,12 @@
+# Configuração do linter do contrato (make lint-openapi). Cada regra desligada
+# tem o motivo ao lado; nenhuma foi desligada só para o aviso sumir.
+extends:
+  - recommended
+
+rules:
+  # O servidor documentado é o do Compose local, o único que existe: este
+  # projeto é um simulador e não tem ambiente publicado.
+  no-server-example.com: off
+  # GET /saude só responde 200 ou 503 por desenho: não recebe parâmetro nem
+  # corpo, então não existe erro do cliente a documentar.
+  operation-4xx-response: off

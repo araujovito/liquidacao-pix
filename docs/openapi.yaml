@@ -2,6 +2,9 @@ openapi: 3.1.0
 info:
   title: Motor de liquidação de transferências instantâneas
   version: 1.0.0
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
   description: |
     API de ingestão. `POST /transferencias` valida, grava a transferência e a
     linha da outbox **na mesma transação** e só então responde `202`. A
@@ -13,13 +16,20 @@ info:
     reenviar a mesma chave com conteúdo diferente devolve `409`. Um cliente
     deve reenviar o **mesmo** corpo em erro de rede ou `5xx`: é seguro.
 
+    O OpenAPI não tem como modelar "reenviar devolve o mesmo resultado", então
+    a garantia não está neste arquivo: está provada nos testes
+    `TestRepetirPedidoDevolveOMesmo` e `TestPedidosSimultaneosComMesmaChave`
+    (20 pedidos iguais ao mesmo tempo geram 1 transferência) e é exercitada
+    pelo teste de contrato `TestAPIRespeitaOContratoOpenAPI`, que também
+    reprova se este documento divergir da API.
+
     Erros seguem o formato *problem details* (RFC 9457) com `type` estável:
     o cliente decide pelo `type`, nunca pelo texto de `detail`.
 
     **Sem autenticação, de propósito.** É um simulador para estudo de
-    consistência, idempotência e resiliência. Um sistema real exigiria
-    autenticação forte e autorização por participante (mTLS e OAuth 2.0, por
-    exemplo), e a chave de idempotência valeria por cliente.
+    consistência, idempotência e resiliência. A decisão, o que um sistema real
+    exigiria e o que mudaria no código estão no ADR 0005
+    (`docs/adr/0005-autenticacao-fora-do-escopo.md`).
 security: []
 servers:
   - url: http://localhost:8080
@@ -56,12 +66,24 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Transferencia' }
-              example:
-                id: 98170ccf-5454-4f5d-aba8-71816f316f6f
-                end_to_end_id: E1234567820261021200000000000001
-                valor_centavos: 2500
-                status: PENDENTE
-                criada_em: '2026-10-21T20:57:28.872602-03:00'
+              examples:
+                novo:
+                  summary: Primeira vez que o pedido chega (sem `Idempotent-Replayed`)
+                  value:
+                    id: 98170ccf-5454-4f5d-aba8-71816f316f6f
+                    end_to_end_id: E1234567820261021200000000000001
+                    valor_centavos: 2500
+                    status: PENDENTE
+                    criada_em: '2026-10-21T20:57:28.872602-03:00'
+                repetido:
+                  summary: O mesmo pedido reenviado (com `Idempotent-Replayed - true`); devolve a transferência já gravada, no estado em que ela está
+                  value:
+                    id: 98170ccf-5454-4f5d-aba8-71816f316f6f
+                    end_to_end_id: E1234567820261021200000000000001
+                    valor_centavos: 2500
+                    status: LIQUIDADA
+                    criada_em: '2026-10-21T20:57:28.872602-03:00'
+                    finalizada_em: '2026-10-21T20:57:28.881910-03:00'
         '400': { $ref: '#/components/responses/JsonInvalido' }
         '409': { $ref: '#/components/responses/Conflito' }
         '413': { $ref: '#/components/responses/CorpoGrande' }
