@@ -1,8 +1,8 @@
 # Observabilidade
 
-Métricas Prometheus em todos os programas, painel Grafana provisionado e uma
-conciliação periódica que vira métrica. O rastreamento distribuído
-(OpenTelemetry) tem seção própria no fim deste documento.
+Métricas Prometheus em todos os programas, painel Grafana provisionado, uma
+conciliação periódica que vira métrica e rastreamento distribuído
+(OpenTelemetry) de um pedido da API até a liquidação.
 
 ## Como rodar
 
@@ -15,6 +15,7 @@ make carga-sustentada       # gera carga para o painel ter o que mostrar
 |---|---|---|
 | Grafana | http://localhost:3001 | painel **Liquidação PIX**; leitura anônima, admin/admin (só desenvolvimento) |
 | Prometheus | http://localhost:9090 | alvos em *Status → Targets* |
+| Jaeger | http://localhost:16686 | traces dos serviços `pix-api`, `pix-relay`, `pix-worker`; também é fonte de dados no Grafana |
 | `/metrics` dos programas | porta 9100 **dentro** da rede do Compose | não é publicada no host |
 
 Tudo preso ao `127.0.0.1`: o painel não fica exposto na rede local.
@@ -87,3 +88,84 @@ categórica validada, com a mesma cor para o mesmo conceito em painéis vizinhos
   (`CONCILIACAO_INTERVALO_SEGUNDOS`); com bancos grandes, ajuste olhando
   `pix_conciliacao_duracao_segundos`.
 - Impacto do índice parcial na carga: ver "Índice das pendentes" abaixo.
+
+## Rastreamento (OpenTelemetry)
+
+```sh
+make observabilidade        # liga o rastreamento e sobe o Jaeger
+```
+
+Sem `OTEL_EXPORTER_OTLP_ENDPOINT` o rastreamento fica desligado e não custa
+nada (os spans viram no-op); `make sistema` sobe assim. O `make
+observabilidade` aponta para o Jaeger (`http://jaeger:4318`).
+
+### O desafio: o pedido não passa por uma chamada HTTP entre os elos
+
+O caminho é API → outbox → relay → Redis → worker. Nenhuma chamada liga um
+elo ao seguinte, então o contexto do rastro **viaja como dado**:
+
+```text
+POST /transferencias            (servidor, pix-api)
+└─ aceitar_pedido               grava o traceparent na linha da outbox
+   └─ relay.publicar            (produtor, pix-relay) abre o traceparent da
+      │                          outbox e grava o seu próprio na mensagem
+      └─ worker.liquidar        (consumidor, pix-worker) continua dali
+```
+
+O formato é o `traceparent` do W3C. A API o grava em `outbox.traceparent`
+(migração 0007); o relay o lê na mesma consulta que pega o lote; a mensagem do
+stream o leva no campo `traceparent`. O intervalo entre o fim do
+`relay.publicar` e o início do `worker.liquidar` é o tempo que a mensagem
+esperou na fila; entre o fim de `aceitar_pedido` e o início de
+`relay.publicar`, o tempo na outbox.
+
+Verificado num pedido real: 1 trace, 3 serviços, 4 spans, cadeia de pais
+correta (consulta ao Jaeger, não só teste).
+
+### Decisões
+
+- **Rastreamento nunca é caminho crítico.** `traceparent` inválido ou ausente na
+  mensagem abre um rastro novo e a liquidação segue (teste). Falha ao ligar o
+  exportador desliga o rastreamento e o serviço sobe.
+- **Erro do cliente não marca o span como erro.** Chave desconhecida, valor
+  inválido e conflito de `end_to_end_id` são respostas 4xx: o serviço fez o que
+  devia. Só falha do serviço (banco fora, erro interno) marca o span.
+- **O span da API tem o nome do padrão da rota** (`GET /transferencias/{id}`),
+  nunca o caminho, pelo mesmo motivo da cardinalidade das métricas. `/saude`
+  não gera span.
+- **O span do relay é um por pedido, mas o envio é um só.** O lote vai num
+  pipeline do Redis; cada span começa no início do lote e termina quando ele
+  acaba. Mostra a parte da vida do pedido passada no relay, não um tempo
+  individual de envio.
+- **Amostragem pelas variáveis padrão** (`OTEL_TRACES_SAMPLER`,
+  `OTEL_TRACES_SAMPLER_ARG`). Padrão do Compose: `parentbased_traceidratio`
+  com razão 1. Sob carga pesada, baixe a razão.
+
+### O que nunca vai para um atributo de span
+
+Chave PIX, CPF, nome do titular, valor e `end_to_end_id`. Só entram o id da
+transferência (UUID opaco), o status final e o número da entrega. O corpo das
+requisições não é registrado. O teste do fluxo completo percorre todos os
+atributos, eventos e descrições de status de todos os spans e falha se achar
+as chaves PIX ou o `end_to_end_id` do pedido.
+
+### Custo sob carga
+
+4 rodadas de 1.000 pedidos/s por 1 min (32 consumidores, Prometheus ligado), em
+sequência no mesmo banco, que cresce a cada rodada:
+
+| Ordem | Rastreamento | Erros / descartes | API p50 | p95 | p99 | Relatório |
+|---|---|---|---|---|---|---|
+| 1 | desligado | 0 / 0 | 3,0 ms | 4,7 ms | 6,5 ms | `…-2327` |
+| 2 | ligado, 1% | 0 / 0 | 3,1 ms | 4,8 ms | 6,9 ms | `…-2329` |
+| 3 | ligado, 100% | 0 / 0 | 3,6 ms | 8,4 ms | 12,1 ms | `…-2331` |
+| 4 | desligado | 0 / 0 | 3,6 ms | 8,5 ms | 12,3 ms | `…-2333` |
+
+**Sem custo mensurável a 1.000/s.** A rodada de 100% (3ª) é indistinguível da
+rodada seguinte sem rastreamento (4ª): a subida de 6,5 para 12 ms ao longo da
+sequência acompanha o crescimento do banco, não o rastreamento. A ordem foi
+escolhida para penalizar o rastreamento (100% rodou com o banco já maior), e
+mesmo assim não houve diferença atribuível a ele. Não foi medido acima de
+1.000/s. O Jaeger guarda os traces em memória (até 20 mil), então o que
+sobra de uma rodada de carga é só a amostra mais recente.
+

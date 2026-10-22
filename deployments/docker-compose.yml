@@ -40,6 +40,12 @@ services:
     environment: &ambiente
       DATABASE_URL: postgres://pix:pix@postgres:5432/pix?sslmode=disable
       REDIS_URL: redis://redis:6379/0
+      # Rastreamento: desligado (vazio) por padrão; `make observabilidade` o
+      # liga apontando para o Jaeger. Sob carga pesada, baixe a razão (ex.:
+      # OTEL_TRACES_SAMPLER_ARG=0.01): amostrar tudo tem custo.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1}
     depends_on:
       postgres: { condition: service_healthy }
     profiles: [sistema]
@@ -96,6 +102,16 @@ services:
     restart: unless-stopped
     profiles: [observabilidade]
 
+  # Traces: UI em http://localhost:16686 (serviços pix-api, pix-relay,
+  # pix-worker). Armazenamento em memória: some ao reiniciar, de propósito.
+  jaeger:
+    image: jaegertracing/all-in-one:1.76.0
+    environment:
+      MEMORY_MAX_TRACES: "20000"
+    ports: ["127.0.0.1:16686:16686"]
+    restart: unless-stopped
+    profiles: [observabilidade]
+
   grafana:
     image: grafana/grafana:12.1.0
     environment:
@@ -110,7 +126,7 @@ services:
       - ./observabilidade/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./observabilidade/grafana/paineis:/var/lib/grafana/paineis:ro
     ports: ["127.0.0.1:3001:3000"]
-    depends_on: [prometheus]
+    depends_on: [prometheus, jaeger]
     restart: unless-stopped
     profiles: [observabilidade]
 

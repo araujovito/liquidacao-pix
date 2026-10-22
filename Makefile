@@ -13,8 +13,8 @@ infra: ## sobe Postgres e Redis e espera ficarem saudáveis
 sistema: ## tudo em contêineres: postgres, redis, migrar, api, relay, worker
 	$(COMPOSE) --profile sistema up -d --build --wait
 
-observabilidade: ## sistema + Prometheus (:9090) e Grafana (:3001, painel "Liquidação PIX")
-	$(COMPOSE) --profile sistema --profile observabilidade up -d --build --wait
+observabilidade: ## sistema + Prometheus (:9090), Grafana (:3001) e Jaeger (:16686), com rastreamento ligado
+	OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 $(COMPOSE) --profile sistema --profile observabilidade up -d --build --wait
 
 infra-parar:
 	$(COMPOSE) --profile sistema --profile observabilidade down

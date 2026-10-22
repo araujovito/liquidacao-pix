@@ -7,3 +7,8 @@ datasources:
     url: http://prometheus:9090
     isDefault: true
     jsonData: { timeInterval: 5s }
+  - name: Jaeger
+    uid: jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
