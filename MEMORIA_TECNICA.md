@@ -10,9 +10,9 @@ tentado. É atualizado no mesmo commit da mudança que descreve.
 
 ## Estado atual
 
-Fases 0 a 3 concluídas: o fluxo completo API → outbox → relay → Redis Stream
-→ worker funciona, com retentativas, mensagens mortas e recuperação de
-mensagens perdidas no Redis. Próximo passo: fase 4 (teste de caos e runbook).
+Fases 0 a 4 concluídas: fluxo completo API → outbox → relay → Redis Stream →
+worker, resiliente a SIGKILL em cada serviço e à perda total do stream
+(teste de caos passando). Próximo passo: fase 5 (teste de carga com k6).
 
 ## Ambiente
 
@@ -31,6 +31,8 @@ make semear         # cliente-0001@pix … cliente-0100@pix com R$ 10.000 cada
 make api            # API em :8080 (PORTA muda)
 make relay          # outbox → Redis Stream
 make worker         # liquida (WORKERS=8 consumidores por processo)
+make sistema        # tudo em contêineres (imagem distroless, usuário não-root)
+make caos           # teste de caos contra o sistema em contêineres (~2 min)
 make teste          # unidade + integração (Testcontainers sobe contêineres próprios)
 make teste-unidade  # só o que roda sem Docker (-short)
 make lint           # gofmt, go vet, golangci-lint
@@ -79,7 +81,51 @@ o seu contêiner e cada teste recebe um banco novo e migrado
 
 Os testes usam tempos menores (espera base 200 ms, órfã 1 s).
 
+## Teste de caos — última rodada de referência
+
+Máquina: notebook AMD Ryzen 7 7735HS (16 threads), 13 GB de RAM, tudo no
+mesmo Docker. Carga: 16 clientes por 45 s, sem limite de taxa.
+
+| Momento | Falha |
+|---|---|
+| 4 s → 9 s | SIGKILL no Redis |
+| 12 s → 16 s | SIGKILL no worker |
+| 19 s → 25 s | SIGKILL no Postgres |
+| 28 s → 32 s | SIGKILL no relay |
+| 35 s → 38 s | SIGKILL na API |
+| 41 s | stream do Redis apagado (perda total da fila) |
+
+Resultado: 63.735 aceitas, 280 retentativas do cliente, 0 desistências;
+todas liquidadas 37 s depois do fim da carga; 38.993 recuperadas pela
+varredura de órfãs (as que estavam no stream apagado); conciliação fechada e
+dinheiro dos clientes conservado.
+
+Observação para a fase 5: a entrada (~1.400–1.900/s) superou a vazão do
+worker (~2.300/s em regime, menos durante as falhas), e a fila acumulou
+dezenas de milhares de mensagens. É o que o teste de carga vai medir.
+
 ## Histórico
+
+### 2026-10-21 — teste de caos e duas falhas que ele encontrou
+- `tests/caos`: carga + SIGKILL em cada serviço + stream apagado; cliente
+  reenvia o mesmo pedido em 5xx/erro de rede; verificação no fim.
+- **Falha 1 — varredura de órfãs gerava duplicatas.** A versão inicial
+  republicava toda PENDENTE publicada havia mais de 30 s. Com a fila
+  atrasada, as que só esperavam eram tratadas como perdidas: 14.417
+  republicações numa rodada sem perda real. Correção: a outbox guarda o id
+  da mensagem (migração 0004) e o relay pergunta ao Redis (`XRANGE id id`)
+  se ela ainda existe. Teste de regressão + mutação.
+- **Falha 1b — varredura lenta.** Olhava só as 1.000 primeiras candidatas a
+  cada 15 s (~67/s): com 50 mil mensagens perdidas não convergia em 4 min.
+  Agora percorre todas em páginas com cursor.
+- **Falha 2 — workers presos em NOGROUP.** Apagar o stream apaga o grupo de
+  consumo; o `XADD` do relay recria o stream sem grupo, e o grupo só era
+  criado na partida do worker. Correção: worker recria o grupo ao receber
+  `NOGROUP`. Teste de regressão.
+- Dockerfile multi-stage, imagem distroless não-root com todos os programas;
+  serviços no compose sob o profile `sistema`.
+- `docs/runbook.md`.
+- `LOG_TESTE=1` mostra os logs do relay/worker nos testes de fila.
 
 ### 2026-10-21 — fila resiliente
 - `internal/queue`: Streams, grupo `liquidadores`, chaves

@@ -45,14 +45,47 @@ func New(rdb *redis.Client, prefixo string) *Fila {
 //
 // Sem MAXLEN de propósito: aparar o stream pode apagar entradas ainda não
 // confirmadas. O tamanho é controlado apagando cada mensagem ao confirmar.
-func (f *Fila) Publicar(ctx context.Context, ids []string) error {
+//
+// Devolve o id de cada entrada criada, na ordem dos ids recebidos.
+func (f *Fila) Publicar(ctx context.Context, ids []string) ([]string, error) {
+	cmds := make([]*redis.StringCmd, len(ids))
 	_, err := f.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
-		for _, id := range ids {
-			p.XAdd(ctx, &redis.XAddArgs{Stream: f.stream, Values: map[string]any{campoID: id}})
+		for i, id := range ids {
+			cmds[i] = p.XAdd(ctx, &redis.XAddArgs{Stream: f.stream, Values: map[string]any{campoID: id}})
 		}
 		return nil
 	})
-	return err
+	if err != nil {
+		return nil, err
+	}
+	mensagens := make([]string, len(cmds))
+	for i, c := range cmds {
+		mensagens[i] = c.Val()
+	}
+	return mensagens, nil
+}
+
+// Existentes diz quais das mensagens ainda estão no stream (esperando ou em
+// processamento). Como confirmar apaga a entrada, ausência significa
+// "processada" ou "perdida".
+func (f *Fila) Existentes(ctx context.Context, mensagens []string) (map[string]bool, error) {
+	cmds := make([]*redis.XMessageSliceCmd, len(mensagens))
+	_, err := f.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for i, m := range mensagens {
+			cmds[i] = p.XRange(ctx, f.stream, m, m)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	existem := make(map[string]bool, len(mensagens))
+	for i, c := range cmds {
+		if len(c.Val()) > 0 {
+			existem[mensagens[i]] = true
+		}
+	}
+	return existem, nil
 }
 
 // GarantirGrupo cria o grupo de consumo se não existir. Começa do início do
@@ -63,6 +96,13 @@ func (f *Fila) GarantirGrupo(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// SemGrupo diz se o erro é NOGROUP: o stream ou o grupo deixou de existir
+// (Redis reiniciado sem dados, stream apagado). O grupo morre junto com o
+// stream, e o XADD do relay recria o stream sem grupo.
+func SemGrupo(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "NOGROUP")
 }
 
 // Ler entrega até n mensagens novas para o consumidor, esperando até

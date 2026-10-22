@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/araujovito/liquidacao-pix/internal/domain"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
@@ -22,14 +23,16 @@ func e2e(n int) string { return fmt.Sprintf("E12345678202610211430%011d", n) }
 type cenario struct {
 	t    *testing.T
 	ctx  context.Context
+	pool *pgxpool.Pool
 	repo *repository.Repositorio
 	liq  usecase.Liquidador
 	seq  int
 }
 
 func novoCenario(t *testing.T) *cenario {
-	repo := repository.New(testinfra.Postgres(t))
-	return &cenario{t: t, ctx: context.Background(), repo: repo, liq: usecase.Liquidador{Repo: repo}}
+	pool := testinfra.Postgres(t)
+	repo := repository.New(pool)
+	return &cenario{t: t, ctx: context.Background(), pool: pool, repo: repo, liq: usecase.Liquidador{Repo: repo}}
 }
 
 func (c *cenario) proximoE2E() string { c.seq++; return e2e(c.seq) }
@@ -137,9 +140,8 @@ func TestLiquidarDeNovoNaoMexeEmNada(t *testing.T) {
 }
 
 func TestLancamentosSaoImutaveis(t *testing.T) {
-	pool := testinfra.Postgres(t)
-	c := &cenario{t: t, ctx: context.Background(), repo: repository.New(pool)}
-	c.liq = usecase.Liquidador{Repo: c.repo}
+	c := novoCenario(t)
+	pool := c.pool
 	c.conta("ana", 500)
 
 	for _, sql := range []string{

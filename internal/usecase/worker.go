@@ -36,7 +36,7 @@ func (w Worker) Rodar(ctx context.Context) error {
 		if time.Now().After(proximaReivindicacao) {
 			proximaReivindicacao = time.Now().Add(w.EsperaBase / 2)
 			retomar, mortas, err := w.Fila.Reivindicar(ctx, w.Consumidor, w.EsperaBase, w.MaxEntregas)
-			if err != nil && ctx.Err() == nil {
+			if err != nil && ctx.Err() == nil && !queue.SemGrupo(err) {
 				w.Log.WarnContext(ctx, "worker: reivindicação falhou", "erro", err)
 			}
 			if mortas > 0 {
@@ -48,6 +48,12 @@ func (w Worker) Rodar(ctx context.Context) error {
 		}
 
 		msgs, err := w.Fila.Ler(ctx, w.Consumidor, w.Lote, time.Second)
+		if queue.SemGrupo(err) {
+			// Achado do teste de caos: sem isto, depois de o Redis perder o
+			// stream, os workers ficavam recebendo NOGROUP para sempre.
+			w.Log.WarnContext(ctx, "worker: grupo de consumo sumiu; recriando")
+			err = w.Fila.GarantirGrupo(ctx)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				break

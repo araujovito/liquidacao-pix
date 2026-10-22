@@ -16,7 +16,10 @@ import (
 // desfaz e as linhas continuam pendentes. Se o commit falhar depois de
 // publicar, a mensagem sai de novo no próximo lote: duplicata aceita de
 // propósito, porque a liquidação é idempotente.
-func (r *Repositorio) PublicarPendentes(ctx context.Context, limite int, publicar func(ctx context.Context, ids []string) error) (int, error) {
+//
+// publicar devolve o id da mensagem criada para cada transferência; ele fica
+// gravado na outbox para a varredura de órfãs.
+func (r *Repositorio) PublicarPendentes(ctx context.Context, limite int, publicar func(ctx context.Context, ids []string) ([]string, error)) (int, error) {
 	var n int
 	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
@@ -44,29 +47,57 @@ func (r *Repositorio) PublicarPendentes(ctx context.Context, limite int, publica
 		if len(ids) == 0 {
 			return nil
 		}
-		if err := publicar(ctx, ids); err != nil {
+		mensagens, err := publicar(ctx, ids)
+		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE outbox SET publicada_em = now() WHERE id = ANY($1)`, linhas)
+		_, err = tx.Exec(ctx, `
+			UPDATE outbox o SET publicada_em = now(), mensagem_id = p.mensagem_id
+			  FROM unnest($1::bigint[], $2::text[]) AS p (id, mensagem_id)
+			 WHERE o.id = p.id`, linhas, mensagens)
 		n = len(ids)
 		return err
 	})
 	return n, err
 }
 
-// RepublicarOrfas devolve à fila de publicação as transferências que seguem
-// PENDENTE muito depois de publicadas. Cobre a mensagem perdida no Redis
-// (queda com AOF everysec perde até ~1 s; sem AOF, tudo): sem isto, a
-// transferência ficaria pendente para sempre.
-func (r *Repositorio) RepublicarOrfas(ctx context.Context, idade time.Duration, maxRepublicacoes int) (int64, error) {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE outbox o
-		   SET publicada_em = NULL, republicacoes = o.republicacoes + 1
-		  FROM transferencias t
-		 WHERE t.id = o.transferencia_id
-		   AND t.status = 'PENDENTE'
+// Orfa é uma linha da outbox cuja transferência segue PENDENTE muito depois
+// de publicada.
+type Orfa struct {
+	Linha      int64
+	MensagemID string
+}
+
+// CandidatasOrfas lista linhas publicadas há mais de idade cuja transferência
+// ainda está PENDENTE, até maxRepublicacoes vezes cada. São só candidatas: a
+// maioria costuma estar apenas esperando na fila, e quem decide é o relay,
+// perguntando ao Redis se a mensagem ainda existe.
+//
+// Paginada por id: depoisDe é a última linha da página anterior (0 na
+// primeira).
+func (r *Repositorio) CandidatasOrfas(ctx context.Context, idade time.Duration, maxRepublicacoes, limite int, depoisDe int64) ([]Orfa, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT o.id, coalesce(o.mensagem_id, '')
+		  FROM outbox o JOIN transferencias t ON t.id = o.transferencia_id
+		 WHERE t.status = 'PENDENTE'
 		   AND o.publicada_em < now() - make_interval(secs => $1)
-		   AND o.republicacoes < $2`, idade.Seconds(), maxRepublicacoes)
+		   AND o.republicacoes < $2
+		   AND o.id > $4
+		 ORDER BY o.id
+		 LIMIT $3`, idade.Seconds(), maxRepublicacoes, limite, depoisDe)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[Orfa])
+}
+
+// Republicar devolve as linhas à fila de publicação. A condição sobre
+// publicada_em evita contar duas vezes uma linha que outro relay já
+// devolveu.
+func (r *Repositorio) Republicar(ctx context.Context, linhas []int64) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE outbox SET publicada_em = NULL, republicacoes = republicacoes + 1
+		 WHERE id = ANY($1) AND publicada_em IS NOT NULL`, linhas)
 	return tag.RowsAffected(), err
 }
 

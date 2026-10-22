@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -33,7 +34,11 @@ type pipeline struct {
 func novoPipeline(t *testing.T) *pipeline {
 	c := novoCenario(t)
 	rdb, prefixo := testinfra.Redis(t)
-	return &pipeline{cenario: c, rdb: rdb, fila: queue.New(rdb, prefixo), log: slog.New(slog.DiscardHandler)}
+	log := slog.New(slog.DiscardHandler)
+	if os.Getenv("LOG_TESTE") != "" { // LOG_TESTE=1 go test -v … mostra os logs do relay e do worker
+		log = slog.New(slog.NewTextHandler(os.Stderr, nil))
+	}
+	return &pipeline{cenario: c, rdb: rdb, fila: queue.New(rdb, prefixo), log: log}
 }
 
 func (p *pipeline) relay() usecase.Relay {
@@ -118,7 +123,7 @@ func TestMensagemRepetidaLiquidaUmaVez(t *testing.T) {
 	p := novoPipeline(t)
 	ana, beto := p.conta("ana", 1_000), p.conta("beto", 0)
 	tr := p.pedir(ana, beto, 600)
-	if err := p.fila.Publicar(p.ctx, []string{tr.ID, tr.ID, tr.ID, tr.ID}); err != nil {
+	if _, err := p.fila.Publicar(p.ctx, []string{tr.ID, tr.ID, tr.ID, tr.ID}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -153,7 +158,7 @@ func TestWorkerMortoTemMensagemReivindicada(t *testing.T) {
 	if err := p.fila.GarantirGrupo(p.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.fila.Publicar(p.ctx, []string{tr.ID}); err != nil {
+	if _, err := p.fila.Publicar(p.ctx, []string{tr.ID}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -176,7 +181,7 @@ func TestWorkerMortoTemMensagemReivindicada(t *testing.T) {
 func TestFalhaPersistenteVaiParaMortas(t *testing.T) {
 	p := novoPipeline(t)
 	fantasma := uuid.NewString()
-	if err := p.fila.Publicar(p.ctx, []string{fantasma}); err != nil {
+	if _, err := p.fila.Publicar(p.ctx, []string{fantasma}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -260,4 +265,57 @@ func TestMensagemPerdidaNoRedisERecuperada(t *testing.T) {
 		t.Fatalf("beto=%s", p.saldo(beto))
 	}
 	p.conciliado()
+}
+
+// Apagar o stream com os workers rodando também apaga o grupo de consumo. O
+// relay recria o stream no XADD seguinte, sem grupo; os workers precisam
+// recriá-lo. Achado do teste de caos (workers presos em NOGROUP).
+func TestStreamApagadoComWorkersRodando(t *testing.T) {
+	p := novoPipeline(t)
+	ana, beto := p.conta("ana", 1_000), p.conta("beto", 0)
+
+	parar := rodar(t, p.relay().Rodar, p.worker("w1").Rodar)
+	defer parar()
+	time.Sleep(200 * time.Millisecond) // worker já criou o grupo e está lendo
+	if err := p.fila.Descartar(p.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := p.repo.CriarComOutbox(p.ctx, domain.Transferencia{
+		EndToEndID: p.proximoE2E(), PagadorID: ana, RecebedorID: beto, Valor: 250}); err != nil {
+		t.Fatal(err)
+	}
+	p.esperarTodasFinais(10 * time.Second)
+	if p.saldo(beto) != 250 {
+		t.Fatalf("beto=%s", p.saldo(beto))
+	}
+	p.conciliado()
+}
+
+// Mensagem que só está esperando na fila (sem worker rodando) há mais tempo
+// que IdadeOrfa NÃO é republicada. Regressão do teste de caos: a primeira
+// versão da varredura republicava tudo que estava PENDENTE havia mais de 30 s,
+// e com a fila atrasada isso gerou 14 mil duplicatas numa rodada.
+func TestMensagemEsperandoNaFilaNaoERepublicada(t *testing.T) {
+	p := novoPipeline(t)
+	ana, beto := p.conta("ana", 1_000), p.conta("beto", 0)
+	if _, err := p.repo.CriarComOutbox(p.ctx, domain.Transferencia{
+		EndToEndID: p.proximoE2E(), PagadorID: ana, RecebedorID: beto, Valor: 10}); err != nil {
+		t.Fatal(err)
+	}
+
+	parar := rodar(t, p.relay().Rodar) // só o relay: ninguém consome
+	time.Sleep(2500 * time.Millisecond) // > 2× IdadeOrfa do teste
+	parar()
+
+	var republicacoes int
+	if err := p.pool.QueryRow(p.ctx, `SELECT republicacoes FROM outbox`).Scan(&republicacoes); err != nil {
+		t.Fatal(err)
+	}
+	if republicacoes != 0 {
+		t.Fatalf("mensagem na fila foi republicada %d vezes", republicacoes)
+	}
+	if n, _ := p.fila.Tamanho(p.ctx); n != 1 {
+		t.Fatalf("stream com %d entradas, esperava 1", n)
+	}
 }

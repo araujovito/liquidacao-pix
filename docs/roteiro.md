@@ -30,9 +30,9 @@ O estado de cada item fica marcado aqui e resumido na `MEMORIA_TECNICA.md`.
 - [x] Varredura de órfãs: mensagem perdida no Redis é republicada
 
 ## Fase 4 — Caos
-- [ ] Script que derruba Redis, worker e Postgres durante a carga
-- [ ] Verificação final: nada perdido, nada duplicado, conciliação fechada
-- [ ] `docs/runbook.md`
+- [x] Programa que derruba Redis, worker, Postgres, relay e API durante a carga e apaga o stream (`tests/caos`)
+- [x] Verificação final: nada perdido, nada duplicado, conciliação fechada
+- [x] `docs/runbook.md`
 
 ## Fase 5 — Carga
 - [ ] Scripts k6 (pico e carga sustentada)
