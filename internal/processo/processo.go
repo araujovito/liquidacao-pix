@@ -11,8 +11,10 @@ import (
 	"syscall"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/araujovito/liquidacao-pix/internal/metricas"
 	"github.com/araujovito/liquidacao-pix/internal/queue"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
 )
@@ -47,6 +49,13 @@ func Redis(ctx context.Context) (*redis.Client, error) {
 		return nil, err
 	}
 	return queue.Conectar(ctx, url)
+}
+
+// Metricas cria o registro do processo e começa a expô-lo em /metrics.
+func Metricas(ctx context.Context, log *slog.Logger) *prometheus.Registry {
+	reg := metricas.NovoRegistro()
+	metricas.Servir(ctx, log, reg)
+	return reg
 }
 
 // Inteiro lê uma variável de ambiente numérica, com padrão.

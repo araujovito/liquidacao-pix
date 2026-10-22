@@ -127,3 +127,27 @@ func (r *Repositorio) PendentesNaOutbox(ctx context.Context) (int, error) {
 	err := r.pool.QueryRow(ctx, `SELECT count(*) FROM outbox WHERE publicada_em IS NULL`).Scan(&n)
 	return n, err
 }
+
+// Estado é uma fotografia barata do que está esperando no Postgres.
+type Estado struct {
+	OutboxPendentes        int64
+	OutboxMaisAntigaSeg    float64 // idade da linha não publicada mais antiga; 0 se não há
+	TransferenciasPendente int64
+	PendenteMaisAntigaSeg  float64 // idade da transferência PENDENTE mais antiga; 0 se não há
+}
+
+// EstadoOperacional lê o estado usando só os índices parciais (outbox
+// pendente e transferência pendente): o custo cresce com o backlog, não com o
+// histórico.
+func (r *Repositorio) EstadoOperacional(ctx context.Context) (Estado, error) {
+	var e Estado
+	if err := r.pool.QueryRow(ctx, `
+		SELECT count(*), coalesce(extract(epoch FROM now() - min(criada_em)), 0)
+		  FROM outbox WHERE publicada_em IS NULL`).Scan(&e.OutboxPendentes, &e.OutboxMaisAntigaSeg); err != nil {
+		return e, err
+	}
+	err := r.pool.QueryRow(ctx, `
+		SELECT count(*), coalesce(extract(epoch FROM now() - min(criada_em)), 0)
+		  FROM transferencias WHERE status = 'PENDENTE'`).Scan(&e.TransferenciasPendente, &e.PendenteMaisAntigaSeg)
+	return e, err
+}

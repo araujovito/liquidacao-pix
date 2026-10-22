@@ -258,3 +258,30 @@ func (f *Fila) Tamanho(ctx context.Context) (int64, error) {
 func (f *Fila) Descartar(ctx context.Context) error {
 	return f.rdb.Del(ctx, f.stream).Err()
 }
+
+// EstadoDaFila é o tamanho do stream, das pendentes de confirmação e das mortas.
+type EstadoDaFila struct {
+	Tamanho, PendentesDeConfirmacao, Mortas int64
+}
+
+// Estado lê os três números. Stream ou grupo inexistente conta como zero:
+// é o estado normal antes da primeira mensagem e depois de uma perda do Redis.
+func (f *Fila) Estado(ctx context.Context) (EstadoDaFila, error) {
+	var e EstadoDaFila
+	var err error
+	if e.Tamanho, err = f.rdb.XLen(ctx, f.stream).Result(); err != nil {
+		return e, err
+	}
+	if e.Mortas, err = f.rdb.XLen(ctx, f.mortas).Result(); err != nil {
+		return e, err
+	}
+	p, err := f.rdb.XPending(ctx, f.stream, f.grupo).Result()
+	switch {
+	case SemGrupo(err):
+	case err != nil:
+		return e, err
+	default:
+		e.PendentesDeConfirmacao = p.Count
+	}
+	return e, nil
+}

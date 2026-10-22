@@ -5,6 +5,7 @@ package main
 import (
 	"time"
 
+	"github.com/araujovito/liquidacao-pix/internal/metricas"
 	"github.com/araujovito/liquidacao-pix/internal/processo"
 	"github.com/araujovito/liquidacao-pix/internal/queue"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
@@ -27,8 +28,10 @@ func main() {
 	}
 	defer rdb.Close() //nolint:errcheck
 
+	reg := processo.Metricas(ctx, log)
 	r := usecase.Relay{
 		Repo: repository.New(pool), Fila: queue.New(rdb, ""), Log: log,
+		Metricas:         metricas.NovoRelay(reg),
 		Lote:             processo.Inteiro("RELAY_LOTE", 200),
 		Intervalo:        10 * time.Millisecond,
 		IdadeOrfa:        30 * time.Second,

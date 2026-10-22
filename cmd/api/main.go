@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/araujovito/liquidacao-pix/internal/metricas"
+	"github.com/araujovito/liquidacao-pix/internal/processo"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
 	"github.com/araujovito/liquidacao-pix/internal/usecase"
 	"github.com/araujovito/liquidacao-pix/internal/web"
@@ -40,9 +42,13 @@ func rodar(log *slog.Logger) error {
 	defer pool.Close()
 
 	repo := repository.New(pool)
+	reg := processo.Metricas(ctx, log)
 	srv := &http.Server{
-		Addr:    ":" + porta(),
-		Handler: (&web.Servidor{Receptor: usecase.Receptor{Repo: repo}, Repo: repo, Log: log}).Rotas(),
+		Addr: ":" + porta(),
+		Handler: (&web.Servidor{
+			Receptor: usecase.Receptor{Repo: repo}, Repo: repo, Log: log,
+			Metricas: metricas.NovaAPI(reg),
+		}).Rotas(),
 		// Prazos explícitos: sem eles um cliente lento segura a conexão para sempre.
 		ReadHeaderTimeout: 2 * time.Second,
 		ReadTimeout:       5 * time.Second,

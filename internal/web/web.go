@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/araujovito/liquidacao-pix/internal/domain"
+	"github.com/araujovito/liquidacao-pix/internal/metricas"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
 	"github.com/araujovito/liquidacao-pix/internal/usecase"
 )
@@ -27,6 +28,7 @@ type Servidor struct {
 	Receptor usecase.Receptor
 	Repo     *repository.Repositorio
 	Log      *slog.Logger
+	Metricas *metricas.API // opcional
 }
 
 // Rotas monta o roteador (padrões de rota do net/http, Go 1.22+).
@@ -35,7 +37,7 @@ func (s *Servidor) Rotas() http.Handler {
 	mux.HandleFunc("POST /transferencias", s.criar)
 	mux.HandleFunc("GET /transferencias/{id}", s.consultar)
 	mux.HandleFunc("GET /saude", s.saude)
-	return mux
+	return s.Metricas.Middleware(mux)
 }
 
 type pedidoJSON struct {
@@ -122,6 +124,7 @@ func (s *Servidor) criar(w http.ResponseWriter, r *http.Request) {
 		// foi gravado.
 		w.Header().Set("Idempotent-Replayed", "true")
 	}
+	s.Metricas.Aceito(repetido)
 	responderJSON(w, http.StatusAccepted, paraJSON(t))
 }
 

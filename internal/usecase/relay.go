@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/araujovito/liquidacao-pix/internal/metricas"
 	"github.com/araujovito/liquidacao-pix/internal/queue"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
 )
@@ -14,6 +15,8 @@ type Relay struct {
 	Repo *repository.Repositorio
 	Fila *queue.Fila
 	Log  *slog.Logger
+
+	Metricas *metricas.Relay // opcional
 
 	Lote      int           // linhas por transação
 	Intervalo time.Duration // espera quando a outbox está vazia
@@ -37,12 +40,15 @@ func (r Relay) Rodar(ctx context.Context) error {
 		}
 		switch {
 		case err != nil:
+			r.Metricas.Falha()
 			r.Log.WarnContext(ctx, "relay: publicação falhou; outbox mantém os pedidos", "erro", err, "nova_tentativa_em", espera)
 			espera = min(espera*2, 5*time.Second)
 		case n == r.Lote:
+			r.Metricas.Publicadas(n)
 			espera = r.Intervalo
 			continue // outbox cheia: emenda o próximo lote sem dormir
 		default:
+			r.Metricas.Publicadas(n)
 			espera = r.Intervalo
 		}
 
@@ -51,6 +57,7 @@ func (r Relay) Rodar(ctx context.Context) error {
 			if k, err := r.varrerOrfas(ctx); err != nil {
 				r.Log.WarnContext(ctx, "relay: varredura de órfãs falhou", "erro", err)
 			} else if k > 0 {
+				r.Metricas.Republicadas(k)
 				r.Log.WarnContext(ctx, "relay: transferências pendentes republicadas", "quantidade", k)
 				continue
 			}

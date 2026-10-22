@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/araujovito/liquidacao-pix/internal/metricas"
 	"github.com/araujovito/liquidacao-pix/internal/queue"
 )
 
@@ -14,6 +15,8 @@ type Worker struct {
 	Fila       *queue.Fila
 	Log        *slog.Logger
 	Consumidor string // nome único no grupo (ex.: host-pid-n)
+
+	Metricas *metricas.Worker // opcional
 
 	Lote int64
 	// EsperaBase é quanto uma mensagem fica parada antes da primeira nova
@@ -40,6 +43,7 @@ func (w Worker) Rodar(ctx context.Context) error {
 				w.Log.WarnContext(ctx, "worker: reivindicação falhou", "erro", err)
 			}
 			if mortas > 0 {
+				w.Metricas.Mortas(mortas)
 				w.Log.ErrorContext(ctx, "worker: mensagens movidas para mortas", "quantidade", mortas)
 			}
 			for _, m := range retomar {
@@ -52,12 +56,14 @@ func (w Worker) Rodar(ctx context.Context) error {
 			// Achado do teste de caos: sem isto, depois de o Redis perder o
 			// stream, os workers ficavam recebendo NOGROUP para sempre.
 			w.Log.WarnContext(ctx, "worker: grupo de consumo sumiu; recriando")
+			w.Metricas.GrupoRecriado()
 			err = w.Fila.GarantirGrupo(ctx)
 		}
 		if err != nil {
 			if ctx.Err() != nil {
 				break
 			}
+			w.Metricas.Falha("ler")
 			w.Log.WarnContext(ctx, "worker: leitura do stream falhou", "erro", err, "nova_tentativa_em", esperaErro)
 			select {
 			case <-ctx.Done():
@@ -81,8 +87,11 @@ func (w Worker) processar(m queue.Mensagem) {
 	ctx, cancelar := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelar()
 
+	inicio := time.Now()
 	t, err := w.Liquidador.Liquidar(ctx, m.TransferenciaID)
+	w.Metricas.Tentativa(time.Since(inicio).Seconds())
 	if err != nil {
+		w.Metricas.Falha("liquidar")
 		// Sem XACK: a mensagem fica pendente e volta por Reivindicar.
 		w.Log.WarnContext(ctx, "worker: liquidação falhou", "transferencia", m.TransferenciaID, "entrega", m.Entregas, "erro", err)
 		if err := w.Fila.AnotarErro(ctx, m, err); err != nil {
@@ -93,6 +102,7 @@ func (w Worker) processar(m queue.Mensagem) {
 	if err := w.Fila.Confirmar(ctx, m); err != nil {
 		// Liquidou mas não confirmou: será entregue de novo e a segunda
 		// liquidação não fará nada.
+		w.Metricas.Falha("confirmar")
 		w.Log.WarnContext(ctx, "worker: confirmação falhou", "transferencia", m.TransferenciaID, "erro", err)
 		return
 	}

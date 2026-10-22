@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/araujovito/liquidacao-pix/internal/metricas"
 	"github.com/araujovito/liquidacao-pix/internal/processo"
 	"github.com/araujovito/liquidacao-pix/internal/queue"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
@@ -32,7 +33,9 @@ func main() {
 
 	host, _ := os.Hostname()
 	fila := queue.New(rdb, "")
-	liq := usecase.Liquidador{Repo: repository.New(pool)}
+	reg := processo.Metricas(ctx, log)
+	wm := metricas.NovoWorker(reg)
+	liq := usecase.Liquidador{Repo: repository.New(pool), AoFinalizar: wm.Finalizada}
 	// 32: com 8, o worker liquidava ~1.400/s e não acompanhava 1.500/s de
 	// entrada (docs/carga.md). Cada liquidação passa a maior parte do tempo
 	// esperando o banco, então mais consumidores rendem mais até o limite do
@@ -42,7 +45,7 @@ func main() {
 	var wg sync.WaitGroup
 	for i := range n {
 		w := usecase.Worker{
-			Liquidador: liq, Fila: fila, Log: log,
+			Liquidador: liq, Fila: fila, Log: log, Metricas: wm,
 			Consumidor:  fmt.Sprintf("%s-%d-%d", host, os.Getpid(), i),
 			Lote:        20,
 			EsperaBase:  5 * time.Second,
