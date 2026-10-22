@@ -114,10 +114,14 @@ POST /transferencias            (servidor, pix-api)
 
 O formato é o `traceparent` do W3C. A API o grava em `outbox.traceparent`
 (migração 0007); o relay o lê na mesma consulta que pega o lote; a mensagem do
-stream o leva no campo `traceparent`. O intervalo entre o fim do
-`relay.publicar` e o início do `worker.liquidar` é o tempo que a mensagem
-esperou na fila; entre o fim de `aceitar_pedido` e o início de
-`relay.publicar`, o tempo na outbox.
+stream o leva no campo `traceparent`. O intervalo entre o fim de
+`aceitar_pedido` e o início de `relay.publicar` é, aproximadamente, o tempo na
+outbox; o intervalo entre `relay.publicar` e `worker.liquidar`, o tempo na
+fila. É aproximado: o span do relay só fecha quando o `XADD` retorna, e a
+mensagem já está visível no Redis antes disso, então com a fila vazia o
+worker pode começar alguns microssegundos **antes** de o span do relay
+terminar (o intervalo aparece negativo). O que é garantido é a ordem causal:
+o worker nunca começa antes de o relay começar.
 
 Verificado num pedido real: 1 trace, 3 serviços, 4 spans, cadeia de pais
 correta (consulta ao Jaeger, não só teste).

@@ -91,9 +91,14 @@ func TestRastroAtravessaOutboxRelayEWorker(t *testing.T) {
 	if relay.SpanKind != trace.SpanKindProducer || worker.SpanKind != trace.SpanKindConsumer {
 		t.Errorf("tipos: relay=%v worker=%v", relay.SpanKind, worker.SpanKind)
 	}
-	// A fila é espera, não trabalho: o worker só começa depois do relay terminar.
-	if worker.StartTime.Before(relay.EndTime) {
-		t.Errorf("worker começou antes de o relay terminar")
+	// Causalidade: o worker só vê a mensagem depois de o relay a enviar, então
+	// não pode começar antes de o relay começar. NÃO vale exigir que comece
+	// depois do FIM do relay: o span do relay só fecha quando o XADD retorna, e
+	// a mensagem já está visível no Redis antes disso. Um worker rápido (ou um
+	// runner lento) começa alguns microssegundos antes de o span fechar; foi o
+	// que o CI mostrou numa primeira versão deste teste.
+	if worker.StartTime.Before(relay.StartTime) {
+		t.Errorf("worker começou antes de o relay começar")
 	}
 
 	// Atributos úteis...
