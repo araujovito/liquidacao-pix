@@ -17,10 +17,10 @@ func (c Centavos) String() string {
 	// Não negamos c diretamente: -math.MinInt64 estoura e continua negativo.
 	// A magnitude em uint64 cobre todo o domínio de Centavos.
 	sinal := ""
-	magnitude := uint64(c)
+	magnitude := uint64(c) //nolint:gosec // só usada quando c >= 0; o ramo abaixo trata o negativo
 	if c < 0 {
 		sinal = "-"
-		magnitude = uint64(-(c + 1)) + 1
+		magnitude = uint64(-(c + 1)) + 1 //nolint:gosec // -(c+1) nunca estoura e é >= 0
 	}
 	return fmt.Sprintf("%sR$ %d,%02d", sinal, magnitude/100, magnitude%100)
 }
