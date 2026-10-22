@@ -98,6 +98,32 @@ func TestAceitoDistingueNovoDeRepetido(t *testing.T) {
 	}
 }
 
+// net/http ignora WriteHeader depois do primeiro. O middleware deve medir o
+// mesmo código que chegou ao cliente, mesmo diante de um handler defeituoso.
+func TestMetricasDaAPIConservamPrimeiroStatusEscrito(t *testing.T) {
+	reg := metricas.NovoRegistro()
+	a := metricas.NovaAPI(reg)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /duplo-status", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	rec := httptest.NewRecorder()
+	a.Middleware(mux).ServeHTTP(rec, httptest.NewRequest("GET", "/duplo-status", nil))
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status enviado = %d, esperava %d", rec.Code, http.StatusAccepted)
+	}
+	got := series(t, reg, "pix_api_requisicao_duracao_segundos")
+	if got["codigo=202,rota=GET /duplo-status"] != 1 {
+		t.Fatalf("métrica não conservou o primeiro status: %v", got)
+	}
+	if got["codigo=500,rota=GET /duplo-status"] != 0 {
+		t.Fatalf("métrica registrou status ignorado pelo servidor: %v", got)
+	}
+}
+
 // Métricas ausentes (receptor nulo) não podem derrubar o servidor: é como
 // todos os testes e o código sem métricas rodam.
 func TestMetricasNulasSaoInofensivas(t *testing.T) {

@@ -47,10 +47,17 @@ func (a *API) Aceito(repetido bool) {
 
 type gravadorDeStatus struct {
 	http.ResponseWriter
-	codigo int
+	codigo   int
+	escreveu bool
 }
 
 func (g *gravadorDeStatus) WriteHeader(c int) {
+	// net/http considera apenas o primeiro WriteHeader. Espelhar essa regra é
+	// essencial para a métrica descrever a resposta que de fato foi enviada.
+	if g.escreveu {
+		return
+	}
+	g.escreveu = true
 	g.codigo = c
 	g.ResponseWriter.WriteHeader(c)
 }
