@@ -39,7 +39,7 @@ make semear         # cliente-0001@pix … cliente-0100@pix com R$ 10.000 cada
 make api            # API em :8080 (PORTA muda)
 make relay          # outbox → Redis Stream
 make worker         # liquida (WORKERS=32 consumidores por processo)
-make demo           # demonstração de ponta a ponta em contêineres (~40 s)
+make demo           # demonstração de ponta a ponta em contêineres (~1 min; 9 passos)
 make observabilidade   # sistema + Prometheus, Grafana, Jaeger e rastreamento ligado
 make testar-alertas    # regras de alerta com séries sintéticas (promtool)
 make carga-sustentada  # k6 (ver docs/carga.md)

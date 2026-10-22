@@ -17,7 +17,7 @@
 > HMAC chain whose key lives outside the database, and card-holder tax IDs
 > (CPF) are encrypted with a per-account key, so erasure is just discarding that
 > key (crypto-shredding) while the financial trail stays verifiable. Metrics,
-> alerts, dashboards and distributed tracing are included. **Try it:** `make demo` (Docker only, ~40 s). Design notes live in
+> alerts, dashboards and distributed tracing are included. **Try it:** `make demo` (Docker only, about a minute). Design notes live in
 > [`docs/adr/`](docs/adr), limits and measured numbers are stated honestly
 > below. The documentation is in Portuguese.
 
@@ -30,12 +30,15 @@ as coisas dão errado.
 
 ```sh
 git clone https://github.com/araujovito/liquidacao-pix && cd liquidacao-pix
-make demo        # ~40 s; precisa só de Docker e curl
+make demo        # cerca de 1 min; precisa só de Docker e curl
 ```
 
 A demonstração sobe tudo, transfere, mostra a idempotência, **derruba o worker
 no meio** e mostra que as transferências aceitas durante a queda são todas
-liquidadas quando ele volta, e termina com a conciliação do livro-razão.
+liquidadas quando ele volta, fecha a conciliação do livro-razão e termina com a
+auditoria: **altera uma entrada direto no banco, com os gatilhos desligados, e o
+verificador aponta conta e posição**; depois cadastra um CPF, apaga a chave e
+mostra a trilha idêntica e verificável.
 
 ```text
 ▶ 5. Falha controlada: derrubo o worker e continuo recebendo pedidos
@@ -44,6 +47,8 @@ liquidadas quando ele volta, e termina com a conciliação do livro-razão.
   ✓ as 15 transferências aceitas durante a queda foram todas liquidadas
 ▶ 7. Conciliação do livro-razão ...
   ✓ conciliação fechada, sem divergências
+▶ 8. Auditoria: cada decisão é assinada numa cadeia de HMAC; a chave não está no banco
+  ✓ alterei uma entrada direto no banco, com os gatilhos desligados: o verificador apontou conta 2, seq 1 (mac)
 ```
 
 Para ver métricas, painel e traces: `make observabilidade` (Grafana em

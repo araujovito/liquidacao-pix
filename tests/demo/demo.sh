@@ -165,8 +165,10 @@ echo "529.982.247-25" | $TITULAR cadastrar-cpf -chave "$CHAVE" >"$LOG" 2>&1 || {
 [[ "$(psql "SELECT count(*) FROM contas WHERE cpf_cifrado IS NOT NULL AND chave_pix = '$CHAVE' AND position('52998224725' in encode(cpf_cifrado, 'escape')) = 0")" == 1 ]] \
   || falha "o CPF cifrado não está no banco, ou aparece em claro"
 mascarado="$($TITULAR mostrar-cpf -chave "$CHAVE" 2>&1)" || falha "não foi possível ler o CPF: $mascarado"
-grep -q '\*\*\*\.982\.247-\*\*' <<<"$mascarado" || falha "a leitura mascarada veio errada: $mascarado"
-ok "CPF cadastrado cifrado e lido pela chave da conta ($(tr -d '\r' <<<"$mascarado"))"
+# O Compose escreve o progresso no mesmo fluxo; fica só a linha mascarada.
+mascarado="$(grep -o '\*\*\*\.[0-9]\{3\}\.[0-9]\{3\}-\*\*' <<<"$mascarado" || true)"
+[[ "$mascarado" == '***.982.247-**' ]] || falha "a leitura mascarada veio errada: '$mascarado'"
+ok "CPF cadastrado cifrado e lido pela chave da conta (só se vê $mascarado)"
 $AUDITAR >"$LOG" 2>&1 || { cat "$LOG" >&2; falha "a cadeia deixou de verificar"; }
 antes="$(psql "SELECT md5(string_agg(a::text, '|' ORDER BY a.conta_id, a.seq)) FROM auditoria a")"
 $TITULAR apagar-cpf -chave "$CHAVE" >"$LOG" 2>&1 || { cat "$LOG" >&2; falha "não foi possível apagar o CPF"; }

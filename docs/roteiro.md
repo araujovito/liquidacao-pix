@@ -54,7 +54,7 @@ e entram nas fases abaixo conforme o assunto.
 ## Fase 8 — Apresentação
 - [x] README final (resumo em inglês, diagrama, como rodar, números, o que **não** garante)
 - [x] ADRs 0001 a 0005 (o 0005 trata a falta de autenticação como decisão de escopo)
-- [x] `make demo` (7 passos, com queda e recuperação do worker) e seu teste sem Docker (`make testar-demo`, no CI)
+- [x] `make demo` (9 passos: queda e recuperação do worker, adulteração da trilha apontada pelo verificador, CPF apagado) e seu teste sem Docker (`make testar-demo`, no CI)
 - [x] Contrato OpenAPI (`docs/openapi.yaml`) com **teste de contrato** nos dois sentidos e `make lint-openapi`
 - [x] Licença Apache-2.0 (`LICENSE`, `NOTICE`)
 
