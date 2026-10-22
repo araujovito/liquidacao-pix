@@ -47,8 +47,9 @@ e entram nas fases abaixo conforme o assunto.
 - [x] Testes de alertas (`make testar-alertas`) rodando no CI, incluindo o ponto cego de alvo parado
 
 ## Fase 7 — Auditoria e dados pessoais
-- [ ] Auditoria em cadeia de hashes (HMAC) + verificador
-- [ ] CPF cifrado com chave por titular + *crypto-shredding*
+- [x] Auditoria em cadeia de HMAC, uma cadeia por conta, + verificador `cmd/auditar` com âncora (ADR 0006)
+- [x] CPF cifrado (AES-256-GCM, chave de dados por conta embrulhada por mestra) + *crypto-shredding* (`cmd/titular`)
+- [ ] **Revisão e auditoria independentes** (risco crítico): `REVISAO_PENDENTE`, ver `docs/handoff.md`
 
 ## Fase 8 — Apresentação
 - [x] README final (resumo em inglês, diagrama, como rodar, números, o que **não** garante)
@@ -61,9 +62,12 @@ e entram nas fases abaixo conforme o assunto.
 
 | Item | Situação |
 |---|---|
-| Fase 7 (auditoria em cadeia de HMAC e proteção de dados pessoais) | Não começou. Risco crítico: implementação, revisão e auditoria final por modelo separado |
+| Revisão do Sol e auditoria final do Opus da fase 7 | `REVISAO_PENDENTE`: implementada e testada (inclusive por mutação), mas a matriz de risco exige revisão independente antes de chamá-la concluída |
 | Causa das pausas da API acima de ~1.250 pedidos/s | Hipóteses `autoanalyze` e checkpoints testadas e descartadas; exige máquina isolada e banco novo a cada rodada |
-| Alertas sem notificação | Falta um Alertmanager; os alertas só aparecem na interface do Prometheus |
+| Alertmanager | Os alertas só aparecem na interface do Prometheus; nenhuma notificação sai |
 | Autenticação e autorização | Fora do escopo por decisão (ADR 0005); qualquer chamador debita qualquer conta |
+| Âncora da auditoria em armazenamento de escrita única | Hoje é um arquivo (`auditar -ancora`); sem âncora anterior, o rabo apagado de uma transferência `REJEITADA` não é detectado (ADR 0006) |
+| Chave-mestra do CPF e chave do HMAC em KMS/HSM | Hoje vêm do ambiente; rotação suportada, mas sem re-embrulho em lote das chaves de dados |
+| Privilégios mínimos do usuário do Postgres | A aplicação ainda usa o dono do esquema; o gatilho de imutabilidade pode ser desligado por ele (o HMAC é a defesa) |
 | `CREATE INDEX` bloqueante nas migrações | Aceitável aqui; em tabela grande exigiria fora do migrador |
 | Rastreamento: span do relay cobre o lote inteiro | Um *link* entre spans pode servir melhor (ADR 0004) |

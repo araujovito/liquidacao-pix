@@ -13,8 +13,11 @@
 > component and the total loss of the queue. A chaos test kills Redis, the
 > worker, PostgreSQL, the relay and the API under load, then wipes the stream,
 > and verifies every accepted transfer ends settled exactly once with the
-> ledger reconciled. Metrics, alerts, dashboards and distributed tracing are
-> included. **Try it:** `make demo` (Docker only, ~40 s). Design notes live in
+> ledger reconciled. Every settlement decision is also signed into a per-account
+> HMAC chain whose key lives outside the database, and card-holder tax IDs
+> (CPF) are encrypted with a per-account key, so erasure is just discarding that
+> key (crypto-shredding) while the financial trail stays verifiable. Metrics,
+> alerts, dashboards and distributed tracing are included. **Try it:** `make demo` (Docker only, ~40 s). Design notes live in
 > [`docs/adr/`](docs/adr), limits and measured numbers are stated honestly
 > below. The documentation is in Portuguese.
 
@@ -71,6 +74,13 @@ flowchart LR
    (débito e crédito) e finaliza. Se a transferência já está final, não faz nada.
 4. **Conciliador** confere periodicamente as invariantes do livro-razão e
    expõe o resultado como métrica.
+5. **Auditoria.** Na mesma transação da liquidação, o worker acrescenta a
+   decisão a uma **cadeia de HMAC-SHA256 por conta** (uma entrada na cadeia do
+   pagador e outra na do recebedor). A chave fica fora do banco; `make auditar`
+   recalcula a cadeia e aponta conta e posição de qualquer alteração, remoção,
+   reordenação ou entrada forjada ([ADR 0006](docs/adr/0006-auditoria-em-cadeia-e-cpf-cifrado.md)).
+   O CPF do titular é cifrado (AES-256-GCM) com uma chave de dados por conta;
+   apagar o dado pessoal é descartar essa chave, e a trilha financeira não muda.
 
 O dinheiro é inteiro em centavos, os lançamentos são **imutáveis** (um gatilho
 no banco recusa `UPDATE` e `DELETE`) e o saldo da conta é uma projeção mantida
@@ -82,12 +92,14 @@ lançamentos é sempre zero.
 
 | Garantia | Como é provada |
 |---|---|
-| Nenhum pedido aceito se perde | Outbox transacional. O [teste de caos](tests/caos/main.go) dá `SIGKILL` em Redis, worker, Postgres, relay e API durante a carga e depois **apaga o stream inteiro**: 55.938 pedidos aceitos, todos liquidados, 0 perdidos |
+| Nenhum pedido aceito se perde | Outbox transacional. O [teste de caos](tests/caos/main.go) dá `SIGKILL` em Redis, worker, Postgres, relay e API durante a carga e depois **apaga o stream inteiro**: 44.337 pedidos aceitos na última rodada (com a trilha de auditoria verificada no fim: 88.874 entradas, 0 problemas), todos liquidados, 0 perdidos |
 | Nenhum pedido é liquidado duas vezes | Trava na transferência + `UNIQUE (transferencia_id, conta_id)` no banco. Teste com 4.000 transferências, cada uma entregue **duas vezes** ao mesmo tempo por 32 goroutines |
 | O dinheiro é conservado | Partidas dobradas, lançamentos imutáveis, [conciliação](internal/repository/conciliacao.go). Um teste adultera 1 centavo de saldo e exige que a conciliação acuse |
 | Sem *deadlock* em transferências cruzadas (A→B e B→A) | Travas em ordem fixa. **Mutação:** sem a ordenação o teste falha com 189 *deadlocks* |
 | Idempotência na API | `end_to_end_id` único decidido pelo banco, não por consulta prévia. 20 pedidos iguais simultâneos geram 1 transferência |
-| A fila se recupera de falhas | Streams com `XCLAIM`, espera crescente, mensagens mortas e varredura de órfãs. Perda total do Redis converge (17.956 recuperadas pela varredura na última rodada de caos) |
+| A fila se recupera de falhas | Streams com `XCLAIM`, espera crescente, mensagens mortas e varredura de órfãs. Perda total do Redis converge (10.777 recuperadas pela varredura na última rodada de caos) |
+| Adulterar a trilha é detectado | Cadeia de HMAC por conta com a chave fora do banco. Testes com Postgres real **desligam os gatilhos** como faria quem tem acesso total e exigem que o verificador aponte a posição: campo alterado, entrada apagada do meio, reordenada, forjada sem a chave, cabeça fora do lugar, decisão sem entrada. Os vetores do formato foram calculados à parte, em Python. Conferido por mutação |
+| Apagar o CPF não toca o histórico financeiro | Teste: depois do apagamento nenhuma linha de lançamentos ou auditoria muda, a cadeia continua verificando e a conciliação continua fechando. Outro teste varre **todas as tabelas** atrás do CPF em claro, com um controle positivo que prova que a varredura enxerga um CPF plantado |
 | Dado sensível fora de métricas e traces | Rótulos de baixa cardinalidade; teste percorre todos os atributos de todos os spans e falha se achar chave PIX ou `end_to_end_id` |
 | O contrato OpenAPI não diverge da API | [Teste de contrato](internal/web/contrato_test.go): requisições reais contra Postgres real, cada resposta validada contra `docs/openapi.yaml` **nos dois sentidos** (nada devolvido fora do contrato, nada documentado sem ser exercido). Conferido por mutação |
 | Os alertas disparam quando devem | `make testar-alertas` (séries sintéticas) **e** prova contra o Prometheus real, derrubando Redis e relay |
@@ -135,19 +147,32 @@ Honestidade sobre os limites faz parte do projeto:
   é a dos componentes ao redor do banco e a de reinícios do próprio banco.
 - **Sem Alertmanager:** os alertas aparecem na interface do Prometheus, mas
   nenhuma notificação sai.
-- **Auditoria criptográfica e proteção de dados pessoais ainda não existem**
-  (cadeia de hashes com HMAC, CPF cifrado, apagamento por descarte de chave).
-  Estão no [roteiro](docs/roteiro.md), fase 7.
+- **A fase 7 (auditoria e CPF cifrado) não passou por revisão independente.**
+  Foi implementada e testada (inclusive por mutação), mas é código de risco
+  crítico e a revisão e a auditoria final que o [plano de colaboração](docs/colaboracao-claude-codex.md)
+  exige estão pendentes. Leia-a como candidata, não como auditada.
+- **A cadeia de auditoria tem limites declarados** ([ADR 0006](docs/adr/0006-auditoria-em-cadeia-e-cpf-cifrado.md)):
+  a chave do HMAC e a mestra do CPF vêm do ambiente (um sistema real as teria
+  num KMS/HSM); quem tem a chave refaz a cadeia; apagar o rabo de uma
+  transferência **rejeitada** junto com a própria transferência só é
+  detectado com uma âncora guardada fora do banco (`auditar -ancora`); e a
+  aplicação ainda usa o dono do esquema do Postgres. A trilha prova o que o
+  sistema decidiu, não quem pediu (não há identidade, ADR 0005).
+- **Apagar o CPF é descartar uma chave:** cópias do banco com a tabela
+  `chaves_cpf` (backup, réplica) mantêm o dado legível até expirarem.
 - `CREATE INDEX` das migrações é bloqueante; em tabela grande exigiria outro
   procedimento.
 
 ## Estrutura
 
 ```text
-cmd/            api · relay · worker · conciliador · migrar · semear
+cmd/            api · relay · worker · conciliador · migrar · semear · auditar · titular
 internal/
   domain/       entidades e regras puras (dinheiro, validação, decisão de liquidação)
   usecase/      aceitar pedido, liquidar, relay, worker, conciliador
+  auditoria/    formato assinado, chaveiro, MAC, verificação e âncoras (ADR 0006)
+  dadospessoais/ CPF: validação, AES-256-GCM, chave de dados embrulhada
+  segredos/     leitura de chaveiros do ambiente
   repository/   Postgres (pgx, SQL à mão): travas, outbox, conciliação
   queue/        Redis Streams
   web/          handlers HTTP (problem details, RFC 9457)
@@ -181,6 +206,7 @@ make teste-unidade   # só o que não precisa de Docker
 make lint            # gofmt, go vet, golangci-lint
 make caos            # teste de caos contra o sistema em contêineres (~2 min)
 make carga-sustentada   # k6
+make auditar         # verifica a cadeia de HMAC (ARGS=-ancora para ancorar as cabeças)
 make testar-alertas  # regras de alerta com promtool
 make lint-openapi    # valida o contrato da API com o redocly
 ```

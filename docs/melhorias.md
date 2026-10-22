@@ -89,11 +89,11 @@ fases do [roteiro](roteiro.md).
 
 ## 6. Segurança e dados pessoais
 
-- [ ] Cifrar CPF com AES-GCM e uma chave por titular.
-- [ ] Implementar *crypto-shredding* e demonstrá-lo em teste.
-- [ ] Implementar auditoria encadeada com HMAC-SHA256.
-- [ ] Criar verificador capaz de apontar a primeira quebra da cadeia.
-- [ ] Não registrar chaves PIX, CPF, credenciais ou corpos completos em logs.
+- [x] Cifrar CPF com AES-GCM e uma chave por conta (o modelo não tem entidade titular; ADR 0006).
+- [x] Implementar *crypto-shredding* e demonstrá-lo em teste (`make demo`, passo 9).
+- [x] Implementar auditoria encadeada com HMAC-SHA256.
+- [x] Criar verificador capaz de apontar a quebra da cadeia (`cmd/auditar`: aponta conta e posição de cada achado).
+- [x] Não registrar chaves PIX, CPF, credenciais ou corpos completos em logs (CPF: teste varre todas as tabelas; chaves não aparecem em mensagens de erro).
 - [x] Executar `govulncheck` na integração contínua.
 - [ ] Revisar permissões do usuário do Postgres para que a proteção do
   livro-razão não dependa apenas de convenção no código.

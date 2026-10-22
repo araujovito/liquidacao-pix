@@ -1,8 +1,10 @@
 # ADR 0006 — Auditoria em cadeia de HMAC e CPF cifrado por conta
 
-**Status:** proposta (2026-10-22). Risco **crítico** (HMAC, AES-GCM e gestão de
-chaves): a implementação só se considera concluída depois de revisão e
-auditoria independentes.
+**Status:** implementada em 2026-10-22; **revisão e auditoria independentes
+pendentes** (`REVISAO_PENDENTE`). Risco **crítico** (HMAC, AES-GCM e gestão de
+chaves): a fase só se considera concluída depois delas. A seção "O que a
+implementação mudou no desenho" registra onde o código se afastou do texto
+original.
 
 ## Contexto
 A especificação promete duas coisas na fase 7:
@@ -104,10 +106,17 @@ sequência, a correspondência com a transferência e a cabeça gravada em
 | Reordenar entradas | elo que não fecha |
 | Inserir entrada falsa | sem a chave não há MAC válido |
 | Recalcular tudo | exige a chave, que não está no banco |
+| Decisão final sem entrada na cadeia | a transferência existe e a conta não tem entrada para ela |
+| Entrada que não bate com a transferência | status, motivo, partes, valor ou instante diferentes |
 
 **Limite que o projeto declara:** apagar as **últimas** entradas de uma conta
 *e* voltar a cabeça em `contas` para o valor anterior deixa uma cadeia que se
-verifica. A cadeia não tem como saber que havia mais. A defesa é uma âncora fora
+verifica. A cadeia não tem como saber que havia mais. A verificação da
+correspondência com `transferencias` estreita isso: para uma transferência
+`LIQUIDADA`, os lançamentos são imutáveis e uma chave estrangeira impede apagar
+a transferência, então a poda deixa uma "decisão sem entrada" e é acusada mesmo
+sem âncora. O que sobra são as `REJEITADAS` (sem lançamentos), cujas entradas
+somem junto com a transferência. A defesa é uma âncora fora
 do banco: `cmd/auditar -ancora` imprime `(conta, seq, mac)` das cabeças. Ao usar
 `-conferir-ancora`, o verificador exige não só `cabeça.seq >= âncora.seq`, mas
 que o elo na posição exata `âncora.seq` ainda tenha o mesmo MAC. Comparar apenas
@@ -163,8 +172,27 @@ e que não é detectada quando não existe.
   existente. O custo precisa ser **medido** a 1.000 pedidos/s e registrado, não
   suposto; se for relevante, o ADR é revisto.
 - `cmd/worker` ganha dependência do chaveiro; `cmd/semear` e `cmd/auditar` também.
-- O `make demo` ganha um passo: adulterar uma entrada com o gatilho desligado e
-  ver o verificador acusar.
+- O `make demo` ganha dois passos: adulterar uma entrada com os gatilhos
+  desligados e ver o verificador acusar; cadastrar e apagar um CPF e ver a
+  trilha intacta.
+- Um banco criado antes da fase 7 não tem trilha para o que já foi decidido, e o
+  verificador o acusa de propósito (decisão sem entrada). Deve ser recriado.
+
+## O que a implementação mudou no desenho
+- **Decisão sem entrada** (acima): verificação que o texto original não tinha e
+  que reduziu o limite declarado.
+- **`decidida_em` nunca antes de `criada_em`:** o instante vem da aplicação; se o
+  relógio dela estiver atrás do do banco, usa-se `criada_em`, para não violar a
+  restrição `finalizacao_nao_antecede_criacao`.
+- **Liquidar sem chaveiro falha** (`ErrSemChaveiro`), em vez de finalizar sem
+  trilha. Só o worker e o `semear` recebem a chave no Compose; API, relay e
+  conciliador não.
+- **O nonce do embrulho tem coluna própria** (`chaves_cpf.nonce_embrulho`).
+- **`cmd/titular` lê o CPF da entrada padrão** e só mostra o CPF mascarado;
+  `semear` não cadastra CPF.
+- **Recadastrar depois de apagar é recusado** (`ErrCPFJaCadastrado`). Um novo
+  consentimento exigiria uma decisão de produto que não está no escopo.
+- **`cmd/auditar` limita a 50 as linhas impressas** e resume por tipo.
 
 ## Alternativas descartadas
 - **Cadeia global:** serializa a liquidação (ver Decisão 2).

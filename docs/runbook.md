@@ -103,6 +103,55 @@ no banco.
 4. `TRANSFERENCIA_INCONSISTENTE` ou `SOMA_GLOBAL` → não corrigir à mão:
    escalar. Correção de livro-razão é lançamento novo, nunca alteração.
 
+## Auditoria acusa adulteração
+
+**Sintoma:** `make auditar` (ou `docker compose run --rm auditar`) sai com
+código 1 e imprime achados `conta N seq M: <tipo>: ...`. Código 2 significa que
+não foi possível verificar (banco, chave ou arquivo), não que a cadeia esteja
+quebrada.
+
+Cada achado aponta uma conta e uma posição. Os tipos:
+
+| Tipo | O que diz |
+|---|---|
+| `mac` | o conteúdo da entrada não bate com a assinatura: foi alterado, ou a assinatura foi forjada sem a chave |
+| `elo` | `mac_anterior` não é o MAC da entrada anterior: entrada removida do meio, inserida ou reordenada |
+| `seq` | buraco ou repetição na posição |
+| `cabeca` | `contas.auditoria_seq/mac` não aponta para a última entrada |
+| `sem-entrada` | uma transferência finalizada não tem entrada nesta cadeia |
+| `transferencia` | a entrada diz outra coisa que a transferência que registra |
+| `chave` | assinada por uma chave que este ambiente não tem: confira `AUDITORIA_CHAVES` |
+| `ancora` | com `-conferir-ancora`: a entrada ancorada sumiu ou foi trocada |
+
+1. **Não corrigir à mão e não "refazer" a cadeia.** Refazer exige a chave e
+   apaga a evidência.
+2. Antes de concluir adulteração, descarte erro de ambiente: o `chave` quase
+   sempre é a variável errada, não um ataque.
+3. Guardar a saída completa do verificador e um `pg_dump` das tabelas
+   `auditoria`, `contas`, `transferencias` e `lancamentos`.
+4. `sem-entrada` em **todas** as transferências antigas e em nenhuma recente
+   indica um banco criado antes da fase 7 (a trilha começa na migração 0008),
+   não adulteração. Recrie o banco de desenvolvimento.
+5. Escalar. A cadeia mostra **onde** e **o que**; **quem** exige os registros
+   de acesso ao banco, que este projeto não tem.
+
+**Âncora.** Para detectar o apagamento do rabo de uma cadeia, guarde as cabeças
+fora do banco: `make auditar ARGS=-ancora`, ou
+`go run ./cmd/auditar -ancora > ancora.txt`, e depois
+`go run ./cmd/auditar -conferir-ancora ancora.txt`. O arquivo não pode morar
+no mesmo lugar que o banco.
+
+## Apagamento de CPF (LGPD art. 18)
+
+```sh
+go run ./cmd/titular apagar-cpf -chave cliente-0001@pix
+```
+
+Descarta a chave de dados da conta; o texto cifrado fica e deixa de poder ser
+lido. É idempotente e irreversível. A trilha e os lançamentos não mudam. Se
+houver cópia do banco com a tabela `chaves_cpf` (backup, réplica), o
+apagamento só vale quando essa cópia também expirar ou for tratada.
+
 ## Consumidores fantasmas no grupo
 
 Cada reinício do worker com outro hostname deixa um consumidor sem uso no

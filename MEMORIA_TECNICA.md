@@ -11,13 +11,16 @@ tentado. É atualizado no mesmo commit da mudança que descreve.
 
 ## Estado atual
 
-Fases 0 a 6 e 8 concluídas: fluxo completo API → outbox → relay → Redis Stream →
+Fases 0 a 8 implementadas: fluxo completo API → outbox → relay → Redis Stream →
 worker, resiliente a SIGKILL em cada serviço e à perda total do stream; teste de
-carga; métricas, painel, alertas e rastreamento; `make demo`, OpenAPI e README.
-Falta a fase 7: auditoria em cadeia de hashes (HMAC) e proteção de dados
-pessoais (CPF cifrado com apagamento por descarte de chave). Último teste de
-caos com o código atual: 55.938 pedidos aceitos, todos liquidados, 0 perdidos ou
-duplicados, conciliação fechada.
+carga; métricas, painel, alertas e rastreamento; `make demo`, OpenAPI e README;
+**auditoria em cadeia de HMAC por conta e CPF cifrado com apagamento por
+descarte de chave** (fase 7, [ADR 0006](docs/adr/0006-auditoria-em-cadeia-e-cpf-cifrado.md)).
+A fase 7 é de risco crítico e está com **`REVISAO_PENDENTE`**: o roteamento exige
+a revisão do Sol e a auditoria final do Opus, que não foram feitas. Último teste
+de caos com o código atual, já com a trilha: 44.337 pedidos aceitos, todos
+liquidados, 0 perdidos ou duplicados, conciliação fechada e 88.874 entradas de
+auditoria em 101 contas, 0 problemas.
 
 ## Ambiente
 
@@ -41,7 +44,8 @@ make observabilidade   # sistema + Prometheus, Grafana, Jaeger e rastreamento li
 make testar-alertas    # regras de alerta com séries sintéticas (promtool)
 make carga-sustentada  # k6 (ver docs/carga.md)
 make sistema        # tudo em contêineres (imagem distroless, usuário não-root)
-make caos           # teste de caos contra o sistema em contêineres (~2 min)
+make caos           # teste de caos contra o sistema em contêineres (~2 min); precisa de banco criado depois da fase 7
+make auditar        # verifica a cadeia de HMAC (ARGS=-ancora / ARGS="-conferir-ancora f")
 make teste          # unidade + integração (Testcontainers sobe contêineres próprios)
 make teste-unidade  # só o que roda sem Docker (-short)
 make lint           # gofmt, go vet, golangci-lint
@@ -81,6 +85,33 @@ o seu contêiner e cada teste recebe um banco novo e migrado
 | 14 | Contexto do rastro viaja na outbox e no stream ([ADR 0004](docs/adr/0004-contexto-do-rastro-viaja-como-dado.md)) | Nenhuma chamada liga os elos do caminho |
 | 15 | Alerta de alvo fora do ar cobre `up == 0` **e** `absent(up)` | Contêiner parado some da descoberta por DNS; só o teste contra o Prometheus real mostrou |
 | 16 | Índice parcial das pendentes (migração 0006) | A coleta de estado não varre a tabela; sem custo mensurável a 1.000/s |
+| 17 | Auditoria: uma cadeia de HMAC **por conta**, não global (ADR 0006) | A cabeça é lida sob a trava de conta que a liquidação já toma, na mesma ordem: sem trava nova, sem serialização global |
+| 18 | Chave do HMAC fora do banco (`AUDITORIA_CHAVES`), id da chave em cada entrada | Quem edita o banco não refaz a cadeia; rotação sem quebrar o passado |
+| 19 | Liquidar sem chaveiro falha (`ErrSemChaveiro`) | Nada é finalizado sem trilha; só worker e semear recebem a chave |
+| 20 | `decidida_em` vem da aplicação, uma vez, e nunca antes de `criada_em` | O mesmo instante em `finalizada_em` e nas duas entradas; relógio atrasado não viola a restrição |
+| 21 | Decisão final sem entrada é achado do verificador | Poda do rabo de uma `LIQUIDADA` é detectada sem âncora (lançamentos imutáveis impedem apagar a transferência) |
+| 22 | CPF: AES-256-GCM, chave de dados por conta embrulhada por mestra do ambiente, AAD com conta (e id da mestra no embrulho) | Apagar = `DELETE` em `chaves_cpf`; auditoria e lançamentos só citam `conta_id` |
+
+### Auditoria e CPF
+
+```sh
+make auditar                            # íntegra: N contas, M entradas (saída 0) ou achados (1)
+make auditar ARGS=-ancora > ancora.txt  # cabeças das cadeias, para guardar fora do banco
+make auditar ARGS="-conferir-ancora ancora.txt"
+echo 529.982.247-25 | go run ./cmd/titular cadastrar-cpf -chave cliente-0001@pix
+go run ./cmd/titular mostrar-cpf -chave cliente-0001@pix   # ***.982.247-**
+go run ./cmd/titular apagar-cpf  -chave cliente-0001@pix   # irreversível
+```
+
+Variáveis (sem valor padrão no código; o `Makefile` e o Compose trazem chaves de
+**desenvolvimento**): `AUDITORIA_CHAVES="id:hex,..."` e `AUDITORIA_CHAVE_ATUAL`
+(worker, semear, auditar); `CPF_CHAVES_MESTRAS` e `CPF_CHAVE_MESTRA_ATUAL`
+(titular). Cada chave tem 32 bytes em hexadecimal. No Compose, API, relay e
+conciliador **não** recebem as chaves.
+
+Um banco criado antes da fase 7 não tem trilha das decisões antigas e o
+verificador o acusa (`sem-entrada`), de propósito. Para testar em banco novo sem
+apagar volumes: `COMPOSE_PROJECT_NAME=outro make caos`.
 
 ## Parâmetros de produção (cmd/relay, cmd/worker)
 
@@ -118,6 +149,32 @@ worker (~2.300/s em regime, menos durante as falhas), e a fila acumulou
 dezenas de milhares de mensagens. É o que o teste de carga vai medir.
 
 ## Histórico
+
+### 2026-10-22 — fase 7: auditoria em cadeia e CPF cifrado
+- ADR 0006 escrito primeiro e revisado adversarialmente antes do código (o Codex
+  fechou a codificação canônica, a âncora por MAC e o AAD do embrulho). Código
+  em commits pequenos: pacote `auditoria` (formato, chaveiro, vetores fixos
+  calculados em Python à parte), gravação na liquidação (migração 0008),
+  `cmd/auditar`, pacote `dadospessoais`, migração 0009 e `cmd/titular`.
+- **A trilha entra na transação da liquidação**, uma entrada na cadeia de cada
+  conta. Se gravá-la falha, saldo, lançamentos e status desfazem (teste).
+- **Mutação revelou lacunas nos meus próprios testes**, três vezes: a verificação
+  da cabeça da conta não tinha teste (adicionado); o AAD da conta no CPF não
+  reprovava nada, porque o embrulho da chave já falhava antes (adicionado teste
+  que re-embrulha a chave para outra conta); e a âncora precisa comparar o MAC,
+  não só o seq.
+- **O limite do ADR ficou menor do que eu escrevi.** O ADR dizia que apagar o
+  rabo de uma cadeia e recuar a cabeça passa despercebido. Para uma `LIQUIDADA`
+  não passa: a transferência e os lançamentos imutáveis ficam, e a verificação
+  de "decisão sem entrada" acusa. Só o rabo de uma `REJEITADA`, apagado junto
+  com a transferência, exige âncora. Os dois lados têm teste.
+- O teste de varredura do CPF tem um controle positivo (planta um CPF em claro e
+  exige que a varredura o ache). Sem ele, "não achou" não significaria nada.
+- `docker compose` com `COMPOSE_PROJECT_NAME` sobrepõe o `name:` do arquivo:
+  permitiu rodar caos e carga em volumes novos sem tocar nos antigos.
+- Caos com a trilha: ver "Estado atual". O banco de desenvolvimento anterior
+  (112 mil transferências sem trilha) continua no volume `liquidacao-pix_postgres`
+  e é acusado pelo verificador, como esperado.
 
 ### 2026-10-22 — o contrato deixa de poder divergir da API
 - `TestAPIRespeitaOContratoOpenAPI` (kin-openapi): requisições reais, Postgres
