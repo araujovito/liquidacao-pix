@@ -1,8 +1,8 @@
-# ADR 0006 — Auditoria em cadeia de HMAC por conta e CPF com chave por titular
+# ADR 0006 — Auditoria em cadeia de HMAC e CPF cifrado por conta
 
 **Status:** proposta (2026-10-22). Risco **crítico** (HMAC, AES-GCM e gestão de
-chaves): a implementação só se considera concluída depois da revisão e da
-auditoria previstas em `docs/colaboracao-claude-codex.md`.
+chaves): a implementação só se considera concluída depois de revisão e
+auditoria independentes.
 
 ## Contexto
 A especificação promete duas coisas na fase 7:
@@ -57,10 +57,18 @@ Tabela `auditoria` (migração própria), só de inserção, com os mesmos gatil
 | `mac_anterior`, `mac` | elo e assinatura (32 bytes) |
 
 `mac = HMAC-SHA256(chave[chave_id], codificação)`. A codificação é **canônica e
-com tamanho prefixado em cada campo**, começando por uma versão do formato e
-pelo nome do domínio (`"pix-auditoria/v1"`). Concatenar texto separado por
-delimitador permite que dois conteúdos diferentes gerem os mesmos bytes; o
-prefixo de tamanho fecha isso, e há teste para esse caso.
+com tamanho prefixado em cada campo**, começando pelo nome e versão do domínio
+(`"pix-auditoria/v1"`). Assina, nesta ordem: `conta_id`, `seq`,
+`transferencia_id`, `status`, presença e valor de `motivo`, `pagador_id`,
+`recebedor_id`, `valor_centavos`, `decidida_em`, `chave_id` e `mac_anterior`.
+Inteiros usam complemento de dois em 8 bytes, *big-endian*; UUID e MAC usam os
+bytes crus; texto usa UTF-8; instante usa microssegundos desde a época UTC; um
+campo opcional começa por um byte de presença. Assim `conta_id` impede copiar
+um elo válido para a outra cadeia da mesma transferência, `seq` liga o MAC à
+posição e `chave_id` não pode ser trocado sem invalidá-lo. Concatenar texto
+separado por delimitador permitiria que dois conteúdos diferentes gerassem os
+mesmos bytes; o formato explícito fecha isso, e vetores de teste fixos impedem
+que uma refatoração mude a representação em silêncio.
 
 A primeira entrada de uma conta usa `mac_anterior` = 32 bytes zero. A cabeça de
 cada cadeia (`seq` e `mac` da última entrada) fica em `contas`, atualizada sob a
@@ -79,8 +87,15 @@ chave aposentada só pode ser descartada depois que se aceita não verificar mai
 as entradas que ela assinou.
 
 ## Decisão 5 — O que o verificador prova e o que não prova
+`decidida_em` é produzido uma vez pela aplicação, truncado para microssegundos,
+e o mesmo valor é passado ao `UPDATE transferencias ... finalizada_em` e às duas
+entradas de auditoria. O verificador exige igualdade com `finalizada_em`; não
+pode haver um relógio do banco e outro da aplicação representando a mesma
+decisão.
+
 `cmd/auditar` percorre as cadeias, recalcula cada MAC e confere o elo, a
-sequência e a cabeça gravada em `contas`. Detecta:
+sequência, a correspondência com a transferência e a cabeça gravada em
+`contas`. Detecta:
 
 | Adulteração | Como aparece |
 |---|---|
@@ -93,25 +108,39 @@ sequência e a cabeça gravada em `contas`. Detecta:
 **Limite que o projeto declara:** apagar as **últimas** entradas de uma conta
 *e* voltar a cabeça em `contas` para o valor anterior deixa uma cadeia que se
 verifica. A cadeia não tem como saber que havia mais. A defesa é uma âncora fora
-do banco: `cmd/auditar -ancora` imprime `(conta, seq, mac)` das cabeças, e a
-execução seguinte, com `-conferir-ancora`, falha se alguma cabeça recuou. Em
-produção essa âncora iria para armazenamento de escrita única (WORM) ou para um
-carimbo de tempo de terceiro; aqui ela é um arquivo, e o teste prova que a
-poda do rabo é detectada **quando existe âncora anterior** e que não é
-detectada quando não existe.
+do banco: `cmd/auditar -ancora` imprime `(conta, seq, mac)` das cabeças. Ao usar
+`-conferir-ancora`, o verificador exige não só `cabeça.seq >= âncora.seq`, mas
+que o elo na posição exata `âncora.seq` ainda tenha o mesmo MAC. Comparar apenas
+a sequência seria insuficiente: depois de uma poda, eventos legítimos poderiam
+fazê-la alcançar novamente o número antigo. Em produção a âncora iria para
+armazenamento autenticado de escrita única (WORM) ou para um carimbo de tempo de
+terceiro. Aqui ela é um arquivo que o teste trata como confiável; quem puder
+alterar banco **e** arquivo pode esconder a poda. O teste prova que a poda do
+rabo é detectada mesmo depois de novas entradas quando existe âncora anterior,
+e que não é detectada quando não existe.
 
-## Decisão 6 — CPF cifrado, chave por titular, apagamento por descarte
+## Decisão 6 — CPF cifrado, chave por conta, apagamento por descarte
+- O modelo atual não tem entidade `titulares`: cada conta de cliente representa
+  um titular cadastrado. Portanto a granularidade real da fase 7 é **uma chave
+  por conta**. Se o produto passar a permitir várias contas para a mesma pessoa,
+  será necessária uma entidade `titulares` compartilhada para que um único
+  pedido apague todas elas; não se deve inferir identidade comparando nomes.
 - `contas.cpf_cifrado` guarda `nonce(12) || texto cifrado || tag`, com AES-256-GCM.
-- Cada titular tem sua chave de dados (32 bytes aleatórios) em tabela separada,
-  `chaves_titular`, **embrulhada** por uma chave-mestra do ambiente
-  (`CPF_CHAVE_MESTRA`) também com AES-GCM. Um vazamento só do banco entrega CPF
-  cifrado e chaves embrulhadas, nenhuma legível.
-- Nonce aleatório de 96 bits por cifragem. Com uma chave por titular e uma ou
+- Cada conta tem sua chave de dados (32 bytes aleatórios) em tabela separada,
+  `chaves_cpf`, **embrulhada** por uma chave-mestra do ambiente também com
+  AES-GCM. A linha guarda `mestra_id`, nonce aleatório e chave embrulhada; o
+  chaveiro `CPF_CHAVES_MESTRAS="v1:<hex>,v2:<hex>"` e
+  `CPF_CHAVE_MESTRA_ATUAL=v2` permite rotação sem reusar nonce nem tornar chaves
+  antigas indecifráveis. O embrulho usa como AAD o domínio
+  `"pix-chave-cpf/v1"`, `conta_id` e `mestra_id`; trocar chaves embrulhadas entre
+  contas ou trocar seu id de mestra falha na autenticação. Um vazamento só do
+  banco entrega CPF cifrado e chaves embrulhadas, nenhuma legível.
+- Nonce aleatório de 96 bits por cifragem. Com uma chave por conta e uma ou
   poucas cifragens por chave, a margem do limite de colisão de nonce no GCM
   fica enorme.
-- Dado autenticado adicional (AAD) = id da conta: um CPF cifrado copiado para
-  outra conta não decifra.
-- **Apagamento:** `DELETE` em `chaves_titular` e `cpf_apagado_em` preenchido. O
+- O CPF usa como AAD o domínio `"pix-cpf/v1"` e o id da conta: um texto cifrado
+  copiado para outra conta ou confundido com outro tipo de cifra não decifra.
+- **Apagamento:** `DELETE` em `chaves_cpf` e `cpf_apagado_em` preenchido. O
   texto cifrado fica no banco e passa a ser indecifrável. A auditoria e os
   lançamentos só referenciam `conta_id`, nunca CPF, então continuam íntegros e
   verificáveis depois do apagamento. Há teste que apaga, verifica a cadeia e
@@ -121,7 +150,7 @@ detectada quando não existe.
   O custo é aceito: a conta se acha pela chave PIX.
 
 ## O que o crypto-shredding não resolve
-- **Cópias da chave:** se um backup do banco contém `chaves_titular`, o
+- **Cópias da chave:** se um backup do banco contém `chaves_cpf`, o
   apagamento só é efetivo quando esse backup expirar ou for tratado à parte.
 - **Chave-mestra:** descartar a chave do titular não ajuda se a chave-mestra e
   uma cópia antiga do banco caírem juntas. Num sistema real a mestra ficaria
