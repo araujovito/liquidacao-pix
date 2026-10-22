@@ -5,13 +5,16 @@ COMPOSE := docker compose -f deployments/docker-compose.yml
 export DATABASE_URL ?= postgres://pix:pix@localhost:5432/pix?sslmode=disable
 export REDIS_URL ?= redis://localhost:6379/0
 
-.PHONY: infra infra-parar migrar semear api relay worker teste teste-unidade lint fmt
+.PHONY: caos infra sistema infra-parar migrar semear api relay worker teste teste-unidade lint fmt
 
 infra: ## sobe Postgres e Redis e espera ficarem saudáveis
 	$(COMPOSE) up -d --wait postgres redis
 
+sistema: ## tudo em contêineres: postgres, redis, migrar, api, relay, worker
+	$(COMPOSE) --profile sistema up -d --build --wait
+
 infra-parar:
-	$(COMPOSE) down
+	$(COMPOSE) --profile sistema down
 
 migrar: infra
 	go run ./cmd/migrar
@@ -27,6 +30,11 @@ relay: migrar
 
 worker: migrar
 	go run ./cmd/worker
+
+caos: ## teste de caos contra o sistema em contêineres (~2 min)
+	$(MAKE) sistema
+	go run ./cmd/semear -contas 100 -saldo 1000000
+	go run ./tests/caos
 
 teste: ## todos os testes; os de integração sobem contêineres próprios
 	go test -race -count=1 ./...
