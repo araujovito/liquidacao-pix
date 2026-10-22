@@ -2,6 +2,8 @@
 
 Cada fase termina com algo que roda e um teste que prova a propriedade da fase.
 O estado de cada item fica marcado aqui e resumido na `MEMORIA_TECNICA.md`.
+Itens menores vindos da revisão do código estão em [`melhorias.md`](melhorias.md)
+e entram nas fases abaixo conforme o assunto.
 
 ## Fase 0 — Esqueleto
 - [x] Módulo Go, `Makefile`, `docker-compose` com Postgres e Redis

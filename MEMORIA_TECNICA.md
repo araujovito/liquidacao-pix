@@ -6,6 +6,7 @@ tentado. É atualizado no mesmo commit da mudança que descreve.
 
 - Especificação: [`docs/especificacao.md`](docs/especificacao.md)
 - Roteiro com o andamento: [`docs/roteiro.md`](docs/roteiro.md)
+- Pendências da revisão do código: [`docs/melhorias.md`](docs/melhorias.md)
 - Decisões: [`docs/adr/`](docs/adr/)
 
 ## Estado atual
@@ -142,9 +143,9 @@ dezenas de milhares de mensagens. É o que o teste de carga vai medir.
 - Mutação: com a varredura de órfãs desligada, o teste do stream apagado
   fica com 1 pendente para sempre.
 - Ponta a ponta manual com os binários: aceita → liquidada em ~9 ms.
-- Observação: entre 20:57 e o commit da API, `internal/domain` recebeu de fora
-  uma correção de estouro em `Centavos.String` (`math.MinInt64`) e fuzz tests;
-  entraram no commit da API. O gosec acusou as conversões int64→uint64; foram
+- Observação: durante a fase 2, uma revisão do código corrigiu um estouro em
+  `Centavos.String` (`math.MinInt64`) e acrescentou fuzz tests ao domínio;
+  essas mudanças entraram no commit da API. O gosec acusou as conversões int64→uint64; foram
   anotadas, sem mudar o comportamento.
 
 ### 2026-10-21 — API de ingestão
