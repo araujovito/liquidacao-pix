@@ -22,7 +22,7 @@ Tudo preso ao `127.0.0.1`: o painel não fica exposto na rede local.
 
 ## Alertas
 
-O Prometheus carrega quatro regras provisionadas em
+O Prometheus carrega seis regras provisionadas em
 `deployments/observabilidade/alertas.yml`. Elas aparecem em **Alerts** na
 interface do Prometheus mesmo sem um Alertmanager configurado; para enviar
 notificações fora do ambiente local, conecte um Alertmanager.
@@ -33,6 +33,34 @@ notificações fora do ambiente local, conecte um Alertmanager.
 | `PixTransferenciaPendenteAntiga` | uma transferência fica pendente por mais de 120 s | 2 min |
 | `PixConciliacaoAtrasada` | nenhuma conciliação conclui há mais de 300 s | 1 min |
 | `PixEstadoColetaFalhando` | a leitura do Postgres ou Redis falha | 1 min |
+| `PixAlvoForaDoAr` | um programa não responde **ou sumiu da lista de alvos** | 1 min |
+| `PixConciliacaoAusente` | não existe nenhuma conciliação concluída | 5 min |
+
+### O ponto cego e como ele foi coberto
+
+As quatro primeiras regras dependem de métricas do conciliador. Se ele cai, as
+séries somem e essas regras **ficam em silêncio**: o pior dia do sistema seria
+também o de alertas calados. As duas últimas cobrem isso.
+
+`PixAlvoForaDoAr` tem duas metades de propósito. `up == 0` pega o programa que
+existe na lista de alvos e não responde (processo travado). `absent(up{job=...})`
+pega o contêiner **parado**, que a descoberta por DNS remove da lista, e então a
+série `up` deixa de existir e `up == 0` nunca acontece. A segunda metade só foi
+descoberta ao derrubar um contêiner de verdade: os testes de regras tinham sido
+escritos com `up = 0`, um cenário que a descoberta por DNS quase não produz.
+
+### Testes
+
+```sh
+make testar-alertas     # promtool, séries sintéticas, sem subir o sistema
+```
+
+Cada alerta tem casos de disparo, de não disparo (inclusive o pico breve e as
+50 mil pendentes recém-chegadas, que não são falha) e de cegueira. Além dos
+testes, os dois alertas de infraestrutura foram provados contra o Prometheus
+real: derrubar o Redis disparou `PixEstadoColetaFalhando{fonte="redis"}` e
+parar o relay disparou `PixAlvoForaDoAr{job="relay"}`; os dois resolveram
+sozinhos quando os serviços voltaram.
 
 Os limites de idade coincidem com os estados críticos do resumo do Grafana.
 O tempo de permanência evita alertar por um pico breve. Não há alerta por

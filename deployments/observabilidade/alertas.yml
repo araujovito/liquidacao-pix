@@ -38,3 +38,37 @@ groups:
         annotations:
           summary: A coleta de estado está falhando
           description: O conciliador não consegue consultar {{ $labels.fonte }}; os números dessa fonte ficam ausentes, não zerados.
+
+      # --- Cegueira: o que as regras acima NÃO conseguem ver sozinhas ---------
+      # As métricas de idade e de conciliação vêm do conciliador. Se ele cai,
+      # as séries somem (o Prometheus as marca como obsoletas) e as regras
+      # acima ficam em silêncio, sem nenhum alarme. Estas duas cobrem esse
+      # buraco; sem elas, o pior dia do sistema seria também o de painel verde.
+      # Dois jeitos de um programa "cair": ele ainda existe na lista de alvos e
+      # não responde (up == 0, ex.: processo travado), ou ele SUMIU da lista
+      # (contêiner parado: a descoberta por DNS o remove e a série up deixa de
+      # existir, então up == 0 nunca acontece). O absent() cobre o segundo caso,
+      # que é o mais comum e foi o que o teste contra o Prometheus real revelou.
+      - alert: PixAlvoForaDoAr
+        expr: |
+          up{job=~"api|relay|worker|conciliador"} == 0
+            or absent(up{job="api"})
+            or absent(up{job="relay"})
+            or absent(up{job="worker"})
+            or absent(up{job="conciliador"})
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Um programa deixou de responder ao Prometheus
+          description: "{{ $labels.job }} não responde ou sumiu da lista de alvos há mais de 1 minuto. Se for o conciliador, os alertas de idade da outbox e das pendentes ficam cegos até ele voltar."
+
+      - alert: PixConciliacaoAusente
+        expr: absent(pix_conciliacao_ultima_execucao_timestamp_segundos)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Não existe nenhuma conciliação concluída
+          description: A série da última conciliação não existe há 5 minutos. O conciliador está fora do ar ou nunca conseguiu concluir uma conciliação.
+

@@ -1,0 +1,197 @@
+# Testes das regras de alerta, com séries sintéticas. Rodam sem subir o sistema:
+#   make testar-alertas
+# O promtool avança o relógio e confere quais alertas estão pendentes ou
+# disparando em cada instante, o que dispensa esperar minutos de verdade.
+rule_files:
+  - alertas.yml
+
+evaluation_interval: 15s
+
+tests:
+  # --- Idade da outbox: dispara só depois de 60 s com permanência de 1 min ---
+  - interval: 15s
+    input_series:
+      - series: 'pix_outbox_mais_antiga_segundos'
+        values: '120x30'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: PixOutboxAntiga
+        exp_alerts: []                      # acima do limite, mas dentro do "for"
+      - eval_time: 2m
+        alertname: PixOutboxAntiga
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: A publicação da outbox está atrasada
+              description: A linha mais antiga espera há mais de 60 segundos; verifique o relay e o Redis.
+
+  # Saudável: 30 s de idade nunca passa de 60.
+  - interval: 15s
+    input_series:
+      - series: 'pix_outbox_mais_antiga_segundos'
+        values: '30x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: PixOutboxAntiga
+        exp_alerts: []
+
+  # Pico breve: passa do limite por 30 s e volta; o "for" filtra.
+  - interval: 15s
+    input_series:
+      - series: 'pix_outbox_mais_antiga_segundos'
+        values: '5 5 120 120 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PixOutboxAntiga
+        exp_alerts: []
+
+  # --- Transferência pendente antiga: limite 120 s, permanência 2 min --------
+  - interval: 15s
+    input_series:
+      - series: 'pix_transferencia_pendente_mais_antiga_segundos'
+        values: '200x40'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: PixTransferenciaPendenteAntiga
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: PixTransferenciaPendenteAntiga
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: Há transferência pendente antiga
+              description: Uma transferência permanece pendente há mais de 120 segundos; localize o atraso entre outbox, stream e worker.
+
+  # Muitas pendentes recém-chegadas NÃO são falha: a idade é baixa. Este é o
+  # caso que motivou medir idade e não tamanho de fila.
+  - interval: 15s
+    input_series:
+      - series: 'pix_transferencias_pendentes'
+        values: '50000x40'
+      - series: 'pix_transferencia_pendente_mais_antiga_segundos'
+        values: '2x40'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: PixTransferenciaPendenteAntiga
+        exp_alerts: []
+
+  # --- Conciliação atrasada: timestamp parado há mais de 300 s ---------------
+  - interval: 15s
+    input_series:
+      - series: 'pix_conciliacao_ultima_execucao_timestamp_segundos'
+        values: '100x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: PixConciliacaoAtrasada
+        exp_alerts: []                      # time() - 100 = 200, abaixo de 300
+      - eval_time: 10m
+        alertname: PixConciliacaoAtrasada
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: A conciliação deixou de concluir
+              description: Nenhuma conciliação terminou nos últimos 300 segundos, mais de dois intervalos normais.
+
+  # --- Coleta de estado: só a fonte com sucesso 0 dispara --------------------
+  - interval: 15s
+    input_series:
+      - series: 'pix_estado_coleta_sucesso{fonte="redis"}'
+        values: '0x20'
+      - series: 'pix_estado_coleta_sucesso{fonte="postgres"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: PixEstadoColetaFalhando
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: PixEstadoColetaFalhando
+        exp_alerts:
+          - exp_labels: { severity: critical, fonte: redis }
+            exp_annotations:
+              summary: A coleta de estado está falhando
+              description: "O conciliador não consegue consultar redis; os números dessa fonte ficam ausentes, não zerados."
+
+  # --- Cegueira: o conciliador cai e as séries de idade somem ----------------
+  # As regras de idade ficam em silêncio (não há série para avaliar)...
+  - interval: 15s
+    input_series:
+      - series: 'up{job="api", instance="api:9100"}'
+        values: '1x20'
+      - series: 'up{job="relay", instance="relay:9100"}'
+        values: '1x20'
+      - series: 'up{job="worker", instance="worker:9100"}'
+        values: '1x20'
+      - series: 'up{job="conciliador", instance="conciliador:9100"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: PixOutboxAntiga
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: PixTransferenciaPendenteAntiga
+        exp_alerts: []
+      # ...e o alerta de alvo fora do ar é quem avisa (alvo presente, up == 0).
+      - eval_time: 2m
+        alertname: PixAlvoForaDoAr
+        exp_alerts:
+          - exp_labels: { severity: critical, job: conciliador, instance: "conciliador:9100" }
+            exp_annotations:
+              summary: Um programa deixou de responder ao Prometheus
+              description: "conciliador não responde ou sumiu da lista de alvos há mais de 1 minuto. Se for o conciliador, os alertas de idade da outbox e das pendentes ficam cegos até ele voltar."
+
+  # Contêiner parado: o alvo SOME da lista e a série up deixa de existir. Foi o
+  # caso que o teste contra o Prometheus real revelou (up == 0 nunca acontece).
+  - interval: 15s
+    input_series:
+      - series: 'up{job="api", instance="api:9100"}'
+        values: '1x20'
+      - series: 'up{job="worker", instance="worker:9100"}'
+        values: '1x20'
+      - series: 'up{job="conciliador", instance="conciliador:9100"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: PixAlvoForaDoAr
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: PixAlvoForaDoAr
+        exp_alerts:
+          - exp_labels: { severity: critical, job: relay }
+            exp_annotations:
+              summary: Um programa deixou de responder ao Prometheus
+              description: "relay não responde ou sumiu da lista de alvos há mais de 1 minuto. Se for o conciliador, os alertas de idade da outbox e das pendentes ficam cegos até ele voltar."
+
+  # Tudo saudável não alerta; job fora da lista (o próprio Prometheus) também não.
+  - interval: 15s
+    input_series:
+      - series: 'up{job="api", instance="api:9100"}'
+        values: '1x20'
+      - series: 'up{job="relay", instance="relay:9100"}'
+        values: '1x20'
+      - series: 'up{job="worker", instance="worker:9100"}'
+        values: '1x20'
+      - series: 'up{job="conciliador", instance="conciliador:9100"}'
+        values: '1x20'
+      - series: 'up{job="prometheus", instance="localhost:9090"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: PixAlvoForaDoAr
+        exp_alerts: []
+
+  # --- Conciliação ausente: nenhuma série por 5 min ---------------------------
+  - interval: 15s
+    input_series:
+      - series: 'up{job="api", instance="api:9100"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: PixConciliacaoAusente
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: PixConciliacaoAusente
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: Não existe nenhuma conciliação concluída
+              description: A série da última conciliação não existe há 5 minutos. O conciliador está fora do ar ou nunca conseguiu concluir uma conciliação.

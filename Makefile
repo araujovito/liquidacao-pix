@@ -5,13 +5,16 @@ COMPOSE := docker compose -f deployments/docker-compose.yml
 export DATABASE_URL ?= postgres://pix:pix@localhost:5432/pix?sslmode=disable
 export REDIS_URL ?= redis://localhost:6379/0
 
-.PHONY: observabilidade caos carga-pico carga-sustentada infra sistema infra-parar migrar semear api relay worker teste teste-unidade lint fmt
+.PHONY: testar-alertas observabilidade caos carga-pico carga-sustentada infra sistema infra-parar migrar semear api relay worker teste teste-unidade lint fmt
 
 infra: ## sobe Postgres e Redis e espera ficarem saudáveis
 	$(COMPOSE) up -d --wait postgres redis
 
 sistema: ## tudo em contêineres: postgres, redis, migrar, api, relay, worker
 	$(COMPOSE) --profile sistema up -d --build --wait
+
+testar-alertas: ## testa as regras de alerta com séries sintéticas (promtool, sem subir o sistema)
+	docker run --rm --entrypoint promtool -v "$(CURDIR)/deployments/observabilidade:/regras:ro" -w /regras prom/prometheus:v3.5.0 test rules alertas_test.yml
 
 observabilidade: ## sistema + Prometheus (:9090), Grafana (:3001) e Jaeger (:16686), com rastreamento ligado
 	OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 $(COMPOSE) --profile sistema --profile observabilidade up -d --build --wait
