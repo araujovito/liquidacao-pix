@@ -25,6 +25,7 @@ func main() {
 		processo.Sair(log, "worker", err)
 	}
 	defer pool.Close()
+	defer processo.Telemetria(ctx, log, "pix-worker")()
 	rdb, err := processo.Redis(ctx)
 	if err != nil {
 		processo.Sair(log, "worker", err)

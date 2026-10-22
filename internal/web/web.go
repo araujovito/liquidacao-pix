@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	"github.com/araujovito/liquidacao-pix/internal/domain"
 	"github.com/araujovito/liquidacao-pix/internal/metricas"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
@@ -34,8 +36,10 @@ type Servidor struct {
 // Rotas monta o roteador (padrões de rota do net/http, Go 1.22+).
 func (s *Servidor) Rotas() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /transferencias", s.criar)
-	mux.HandleFunc("GET /transferencias/{id}", s.consultar)
+	// O span nomeado pelo padrão da rota (nunca pelo caminho, que tem o id)
+	// mantém a cardinalidade baixa. /saude fica de fora: seria ruído.
+	mux.Handle("POST /transferencias", otelhttp.NewHandler(http.HandlerFunc(s.criar), "POST /transferencias"))
+	mux.Handle("GET /transferencias/{id}", otelhttp.NewHandler(http.HandlerFunc(s.consultar), "GET /transferencias/{id}"))
 	mux.HandleFunc("GET /saude", s.saude)
 	return s.Metricas.Middleware(mux)
 }

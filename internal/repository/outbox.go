@@ -10,9 +10,29 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// Pendente é uma linha da outbox à espera de publicação.
+type Pendente struct {
+	TransferenciaID string
+	Traceparent     string // contexto do rastro do pedido; vazio se o rastreamento estava desligado
+}
+
 // PublicarPendentes pega até limite linhas não publicadas da outbox, entrega
 // os ids de transferência a publicar e, se publicar der certo, marca as
 // linhas como publicadas — tudo na mesma transação.
+//
+// É a forma simples de PublicarPendentesDoRastro, para quem só precisa dos ids.
+func (r *Repositorio) PublicarPendentes(ctx context.Context, limite int, publicar func(ctx context.Context, ids []string) ([]string, error)) (int, error) {
+	return r.PublicarPendentesDoRastro(ctx, limite, func(ctx context.Context, ps []Pendente) ([]string, error) {
+		ids := make([]string, len(ps))
+		for i, p := range ps {
+			ids[i] = p.TransferenciaID
+		}
+		return publicar(ctx, ids)
+	})
+}
+
+// PublicarPendentesDoRastro faz o trabalho de PublicarPendentes entregando, além
+// do id, o traceparent de cada linha, para o relay continuar o rastro do pedido.
 //
 // FOR UPDATE SKIP LOCKED deixa vários relays rodarem juntos: cada um pega um
 // lote diferente em vez de esperar o do outro. Se publicar falhar, a transação
@@ -22,11 +42,11 @@ import (
 //
 // publicar devolve o id da mensagem criada para cada transferência; ele fica
 // gravado na outbox para a varredura de órfãs.
-func (r *Repositorio) PublicarPendentes(ctx context.Context, limite int, publicar func(ctx context.Context, ids []string) ([]string, error)) (int, error) {
+func (r *Repositorio) PublicarPendentesDoRastro(ctx context.Context, limite int, publicar func(ctx context.Context, pendentes []Pendente) ([]string, error)) (int, error) {
 	var publicadas int
 	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT id, transferencia_id::text FROM outbox
+			SELECT id, transferencia_id::text, coalesce(traceparent, '') FROM outbox
 			 WHERE publicada_em IS NULL
 			 ORDER BY id
 			 LIMIT $1
@@ -35,22 +55,22 @@ func (r *Repositorio) PublicarPendentes(ctx context.Context, limite int, publica
 			return err
 		}
 		var linhas []int64
-		var ids []string
+		var pendentes []Pendente
 		for rows.Next() {
 			var linha int64
-			var id string
-			if err := rows.Scan(&linha, &id); err != nil {
+			var p Pendente
+			if err := rows.Scan(&linha, &p.TransferenciaID, &p.Traceparent); err != nil {
 				return err
 			}
-			linhas, ids = append(linhas, linha), append(ids, id)
+			linhas, pendentes = append(linhas, linha), append(pendentes, p)
 		}
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		if len(ids) == 0 {
+		if len(pendentes) == 0 {
 			return nil
 		}
-		mensagens, err := publicar(ctx, ids)
+		mensagens, err := publicar(ctx, pendentes)
 		if err != nil {
 			return err
 		}
@@ -58,8 +78,8 @@ func (r *Repositorio) PublicarPendentes(ctx context.Context, limite int, publica
 		// maior. Sem esta validação, um publicador defeituoso poderia devolver
 		// menos ids, marcar linhas como publicadas sem mensagem_id e ainda fazer
 		// o método informar que publicou tudo.
-		if len(mensagens) != len(ids) {
-			return fmt.Errorf("publicar outbox: %d transferências, %d mensagens", len(ids), len(mensagens))
+		if len(mensagens) != len(pendentes) {
+			return fmt.Errorf("publicar outbox: %d transferências, %d mensagens", len(pendentes), len(mensagens))
 		}
 		// Um id vazio tem a contagem certa mas não identifica mensagem: a
 		// varredura de órfãs o trata como "sumiu do Redis" e republicaria.
@@ -70,7 +90,7 @@ func (r *Repositorio) PublicarPendentes(ctx context.Context, limite int, publica
 			UPDATE outbox o SET publicada_em = now(), mensagem_id = p.mensagem_id
 			  FROM unnest($1::bigint[], $2::text[]) AS p (id, mensagem_id)
 			 WHERE o.id = p.id`, linhas, mensagens)
-		publicadas = len(ids)
+		publicadas = len(pendentes)
 		return err
 	})
 	// Só informa publicações depois do commit: se o UPDATE ou o COMMIT

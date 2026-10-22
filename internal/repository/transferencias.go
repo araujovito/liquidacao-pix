@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/araujovito/liquidacao-pix/internal/domain"
+	"github.com/araujovito/liquidacao-pix/internal/telemetria"
 )
 
 // ChaveLiquidez identifica a conta técnica criada pela migração 0001.
@@ -88,7 +89,8 @@ func (r *Repositorio) CriarComOutbox(ctx context.Context, t domain.Transferencia
 		if criada, err = inserirTransferencia(ctx, tx, t); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO outbox (transferencia_id) VALUES ($1)`, criada.ID)
+		_, err = tx.Exec(ctx, `INSERT INTO outbox (transferencia_id, traceparent) VALUES ($1, nullif($2, ''))`,
+			criada.ID, telemetria.Traceparent(ctx))
 		return err
 	})
 	return criada, err

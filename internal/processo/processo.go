@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
@@ -17,6 +18,7 @@ import (
 	"github.com/araujovito/liquidacao-pix/internal/metricas"
 	"github.com/araujovito/liquidacao-pix/internal/queue"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
+	"github.com/araujovito/liquidacao-pix/internal/telemetria"
 )
 
 // Log devolve o logger JSON. LOG_NIVEL=debug mostra cada liquidação.
@@ -56,6 +58,25 @@ func Metricas(ctx context.Context, log *slog.Logger) *prometheus.Registry {
 	reg := metricas.NovoRegistro()
 	metricas.Servir(ctx, log, reg)
 	return reg
+}
+
+// Telemetria liga o rastreamento (se OTEL_EXPORTER_OTLP_ENDPOINT existir) e
+// devolve a função que esvazia os spans pendentes; use com defer. O
+// encerramento usa um contexto novo e curto: o do processo já foi cancelado.
+func Telemetria(ctx context.Context, log *slog.Logger, servico string) func() {
+	encerrar, err := telemetria.Iniciar(ctx, log, servico)
+	if err != nil {
+		// Rastreamento é diagnóstico: falha ao ligá-lo não derruba o serviço.
+		log.Warn("rastreamento desligado", "erro", err)
+		return func() {}
+	}
+	return func() {
+		fim, cancelar := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelar()
+		if err := encerrar(fim); err != nil {
+			log.Warn("esvaziar spans", "erro", err)
+		}
+	}
 }
 
 // Inteiro lê uma variável de ambiente numérica, com padrão.

@@ -5,9 +5,14 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/araujovito/liquidacao-pix/internal/metricas"
 	"github.com/araujovito/liquidacao-pix/internal/queue"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
+	"github.com/araujovito/liquidacao-pix/internal/telemetria"
 )
 
 // Relay copia a outbox do Postgres para o Redis Stream.
@@ -34,7 +39,7 @@ func (r Relay) Rodar(ctx context.Context) error {
 	espera := r.Intervalo
 	proximaVarredura := time.Now().Add(r.IdadeOrfa / 2)
 	for {
-		n, err := r.Repo.PublicarPendentes(ctx, r.Lote, r.Fila.Publicar)
+		n, err := r.Repo.PublicarPendentesDoRastro(ctx, r.Lote, r.publicar)
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -121,4 +126,34 @@ func (r Relay) varrerOrfas(ctx context.Context) (int64, error) {
 			return total, nil
 		}
 	}
+}
+
+// publicar envia o lote ao stream continuando o rastro de cada pedido: abre um
+// span "relay.publicar" filho do span que aceitou o pedido (o traceparent veio
+// da outbox) e grava o contexto desse span na mensagem, para o worker seguir
+// dali. O envio é um só (pipeline); o span de cada pedido começa no início do
+// lote e termina quando ele acaba, que é a parte da vida do pedido passada
+// aqui.
+func (r Relay) publicar(ctx context.Context, pendentes []repository.Pendente) ([]string, error) {
+	inicio := time.Now()
+	spans := make([]trace.Span, len(pendentes))
+	entradas := make([]queue.Entrada, len(pendentes))
+	for i, p := range pendentes {
+		pctx, span := telemetria.Tracer().Start(
+			telemetria.ComTraceparent(ctx, p.Traceparent), "relay.publicar",
+			trace.WithTimestamp(inicio), trace.WithSpanKind(trace.SpanKindProducer),
+			trace.WithAttributes(attribute.String("pix.transferencia_id", p.TransferenciaID)))
+		spans[i] = span
+		entradas[i] = queue.Entrada{TransferenciaID: p.TransferenciaID, Traceparent: telemetria.Traceparent(pctx)}
+	}
+
+	mensagens, err := r.Fila.PublicarComRastro(ctx, entradas)
+	for _, span := range spans {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "publicação no stream falhou")
+		}
+		span.End()
+	}
+	return mensagens, err
 }

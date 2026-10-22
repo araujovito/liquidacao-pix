@@ -5,8 +5,12 @@ import (
 	"errors"
 	"fmt"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/araujovito/liquidacao-pix/internal/domain"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
+	"github.com/araujovito/liquidacao-pix/internal/telemetria"
 )
 
 // Pedido é o que o cliente envia: contas identificadas por chave PIX.
@@ -38,6 +42,20 @@ type Receptor struct {
 // resolvem para uma transferência só, porque quem decide é a restrição
 // UNIQUE do banco, não uma checagem prévia.
 func (r Receptor) Aceitar(ctx context.Context, p Pedido) (t domain.Transferencia, repetido bool, err error) {
+	// O traceparent gravado na outbox é o deste span: o relay continua dele.
+	ctx, span := telemetria.Tracer().Start(ctx, "aceitar_pedido")
+	defer func() {
+		if t.ID != "" {
+			span.SetAttributes(attribute.String("pix.transferencia_id", t.ID), attribute.Bool("pix.repetido", repetido))
+		}
+		// Erro de entrada do cliente (chave desconhecida, valor inválido,
+		// conflito) é resposta 4xx, não falha do serviço: não marca o span.
+		if err != nil && !erroDoCliente(err) {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "falha ao aceitar o pedido")
+		}
+		span.End()
+	}()
 	pagador, err := r.idDaChave(ctx, p.ChavePagador)
 	if err != nil {
 		return t, false, err
@@ -72,4 +90,10 @@ func (r Receptor) idDaChave(ctx context.Context, chave string) (int64, error) {
 		return 0, fmt.Errorf("%w: %q", ErrChaveDesconhecida, chave)
 	}
 	return id, err
+}
+
+func erroDoCliente(err error) bool {
+	return errors.Is(err, ErrChaveDesconhecida) || errors.Is(err, ErrConflito) ||
+		errors.Is(err, domain.ErrEndToEndInvalido) || errors.Is(err, domain.ErrValorInvalido) ||
+		errors.Is(err, domain.ErrMesmaConta)
 }

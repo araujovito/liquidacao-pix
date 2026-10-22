@@ -40,6 +40,7 @@ func rodar(log *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
+	defer processo.Telemetria(ctx, log, "pix-api")()
 
 	repo := repository.New(pool)
 	reg := processo.Metricas(ctx, log)

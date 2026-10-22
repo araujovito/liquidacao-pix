@@ -16,13 +16,23 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const campoID = "transferencia_id"
+const (
+	campoID          = "transferencia_id"
+	campoTraceparent = "traceparent"
+)
 
 // Mensagem é uma entrega do stream.
 type Mensagem struct {
 	ID              string // id da entrada no stream
 	TransferenciaID string
-	Entregas        int64 // quantas vezes já foi entregue (1 na primeira leitura)
+	Traceparent     string // contexto do rastro gravado pelo relay; vazio se não havia
+	Entregas        int64  // quantas vezes já foi entregue (1 na primeira leitura)
+}
+
+// Entrada é o que o relay publica: a transferência e o contexto do rastro.
+type Entrada struct {
+	TransferenciaID string
+	Traceparent     string
 }
 
 // Fila guarda os nomes das chaves. Prefixo permite isolar ambientes (e
@@ -41,17 +51,33 @@ func New(rdb *redis.Client, prefixo string) *Fila {
 	return &Fila{rdb: rdb, stream: base, mortas: base + ":mortas", erros: base + ":erros", grupo: "liquidadores"}
 }
 
-// Publicar adiciona uma mensagem por transferência, num único envio.
+// Publicar adiciona uma mensagem por transferência, num único envio, sem
+// contexto de rastro. Veja PublicarComRastro.
+func (f *Fila) Publicar(ctx context.Context, ids []string) ([]string, error) {
+	entradas := make([]Entrada, len(ids))
+	for i, id := range ids {
+		entradas[i] = Entrada{TransferenciaID: id}
+	}
+	return f.PublicarComRastro(ctx, entradas)
+}
+
+// PublicarComRastro adiciona uma mensagem por entrada, num único envio. O
+// campo traceparent só é gravado quando há contexto: com o rastreamento
+// desligado a mensagem fica idêntica à de antes.
 //
 // Sem MAXLEN de propósito: aparar o stream pode apagar entradas ainda não
 // confirmadas. O tamanho é controlado apagando cada mensagem ao confirmar.
 //
-// Devolve o id de cada entrada criada, na ordem dos ids recebidos.
-func (f *Fila) Publicar(ctx context.Context, ids []string) ([]string, error) {
-	cmds := make([]*redis.StringCmd, len(ids))
+// Devolve o id de cada entrada criada, na ordem recebida.
+func (f *Fila) PublicarComRastro(ctx context.Context, entradas []Entrada) ([]string, error) {
+	cmds := make([]*redis.StringCmd, len(entradas))
 	_, err := f.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
-		for i, id := range ids {
-			cmds[i] = p.XAdd(ctx, &redis.XAddArgs{Stream: f.stream, Values: map[string]any{campoID: id}})
+		for i, e := range entradas {
+			valores := map[string]any{campoID: e.TransferenciaID}
+			if e.Traceparent != "" {
+				valores[campoTraceparent] = e.Traceparent
+			}
+			cmds[i] = p.XAdd(ctx, &redis.XAddArgs{Stream: f.stream, Values: valores})
 		}
 		return nil
 	})
@@ -129,7 +155,8 @@ func (f *Fila) Ler(ctx context.Context, consumidor string, n int64, bloquear tim
 
 func paraMensagem(m redis.XMessage, entregas int64) Mensagem {
 	id, _ := m.Values[campoID].(string)
-	return Mensagem{ID: m.ID, TransferenciaID: id, Entregas: entregas}
+	tp, _ := m.Values[campoTraceparent].(string)
+	return Mensagem{ID: m.ID, TransferenciaID: id, Traceparent: tp, Entregas: entregas}
 }
 
 // Confirmar tira a mensagem da lista de pendentes e do stream, de forma
