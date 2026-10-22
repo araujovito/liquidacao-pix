@@ -23,11 +23,15 @@ import (
 	"github.com/araujovito/liquidacao-pix/internal/repository"
 )
 
+// escrever ignora o erro de escrita: se o terminal ou o pipe fechou, não há
+// outro lugar para avisar, e o código de saída é o que importa.
+func escrever(w io.Writer, f string, a ...any) { _, _ = fmt.Fprintf(w, f, a...) }
+
 func main() { os.Exit(executar(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func executar(args []string, in io.Reader, out, errOut io.Writer) int {
 	falha := func(f string, a ...any) int {
-		fmt.Fprintf(errOut, "titular: "+f+"\n", a...)
+		escrever(errOut, "titular: "+f+"\n", a...)
 		return 1
 	}
 	if len(args) == 0 {
@@ -69,7 +73,7 @@ func executar(args []string, in io.Reader, out, errOut io.Writer) int {
 		if err := repo.CadastrarCPF(ctx, m, *chave, strings.TrimSpace(linha)); err != nil {
 			return falha("%v", err)
 		}
-		fmt.Fprintf(out, "CPF cadastrado (cifrado) para %s\n", *chave)
+		escrever(out, "CPF cadastrado (cifrado) para %s\n", *chave)
 	case "mostrar-cpf":
 		m, err := dadospessoais.MestrasDoAmbiente()
 		if err != nil {
@@ -79,12 +83,12 @@ func executar(args []string, in io.Reader, out, errOut io.Writer) int {
 		if err != nil {
 			return falha("%v", err)
 		}
-		fmt.Fprintf(out, "%s: %s\n", *chave, dadospessoais.Mascarar(cpf))
+		escrever(out, "%s: %s\n", *chave, dadospessoais.Mascarar(cpf))
 	case "apagar-cpf":
 		if err := repo.ApagarCPF(ctx, *chave); err != nil {
 			return falha("%v", err)
 		}
-		fmt.Fprintf(out, "CPF de %s apagado: a chave foi descartada\n", *chave)
+		escrever(out, "CPF de %s apagado: a chave foi descartada\n", *chave)
 	default:
 		return falha("comando desconhecido %q", cmd)
 	}

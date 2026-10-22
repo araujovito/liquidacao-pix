@@ -33,6 +33,10 @@ import (
 // milhares de linhas escondem o que importa. O resumo por tipo é completo.
 const maxLinhas = 50
 
+// escrever ignora o erro de escrita: se o terminal ou o pipe fechou, não há
+// outro lugar para avisar, e o código de saída é o que importa.
+func escrever(w io.Writer, f string, a ...any) { _, _ = fmt.Fprintf(w, f, a...) }
+
 func main() {
 	imprimirAncora := flag.Bool("ancora", false, "imprime a cabeça de cada cadeia (conta seq mac) se a verificação passar")
 	arquivoAncora := flag.String("conferir-ancora", "", "arquivo de âncoras de uma execução anterior")
@@ -42,7 +46,7 @@ func main() {
 
 func executar(out, errOut io.Writer, imprimirAncora bool, arquivoAncora string) int {
 	falha := func(f string, a ...any) int {
-		fmt.Fprintf(errOut, "auditar: "+f+"\n", a...)
+		escrever(errOut, "auditar: "+f+"\n", a...)
 		return 2
 	}
 	chaveiro, err := auditoria.ChaveiroDoAmbiente()
@@ -51,7 +55,7 @@ func executar(out, errOut io.Writer, imprimirAncora bool, arquivoAncora string) 
 	}
 	var ancoras []auditoria.Ancora
 	if arquivoAncora != "" {
-		f, err := os.Open(arquivoAncora)
+		f, err := os.Open(arquivoAncora) //nolint:gosec // o caminho é argumento do operador, de propósito
 		if err != nil {
 			return falha("%v", err)
 		}
@@ -102,22 +106,22 @@ func executar(out, errOut io.Writer, imprimirAncora bool, arquivoAncora string) 
 		for i, p := range problemas {
 			porTipo[p.Tipo]++
 			if i < maxLinhas {
-				fmt.Fprintln(errOut, p)
+				escrever(errOut, "%s\n", p)
 			}
 		}
 		if len(problemas) > maxLinhas {
-			fmt.Fprintf(errOut, "... e mais %d (mostrados os %d primeiros)\n", len(problemas)-maxLinhas, maxLinhas)
+			escrever(errOut, "... e mais %d (mostrados os %d primeiros)\n", len(problemas)-maxLinhas, maxLinhas)
 		}
 		for _, tipo := range slices.Sorted(maps.Keys(porTipo)) {
-			fmt.Fprintf(errOut, "auditar: %6d do tipo %s\n", porTipo[tipo], tipo)
+			escrever(errOut, "auditar: %6d do tipo %s\n", porTipo[tipo], tipo)
 		}
-		fmt.Fprintf(errOut, "auditar: %d problema(s), %d contas, %d entradas lidas\n", len(problemas), contas, entradas)
+		escrever(errOut, "auditar: %d problema(s), %d contas, %d entradas lidas\n", len(problemas), contas, entradas)
 		return 1
 	}
-	fmt.Fprintf(errOut, "auditar: íntegra: %d contas, %d entradas\n", contas, entradas)
+	escrever(errOut, "auditar: íntegra: %d contas, %d entradas\n", contas, entradas)
 	if imprimirAncora {
 		for _, l := range cabecas {
-			fmt.Fprintln(out, l)
+			escrever(out, "%s\n", l)
 		}
 	}
 	return 0
