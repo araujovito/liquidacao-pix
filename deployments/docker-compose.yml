@@ -74,6 +74,46 @@ services:
       migrar: { condition: service_completed_successfully }
     profiles: [sistema]
 
+  # Conciliação periódica e estado da fila (outbox, idade, stream). Uma única
+  # instância: o estado é lido na hora da coleta e réplicas o duplicariam.
+  conciliador:
+    image: liquidacao-pix:dev
+    command: ["/app/conciliador"]
+    environment: *ambiente
+    restart: unless-stopped
+    depends_on:
+      migrar: { condition: service_completed_successfully }
+    profiles: [sistema]
+
+  # Observabilidade: `make observabilidade`. Os programas expõem /metrics na
+  # porta 9100 só dentro da rede do Compose; daqui para fora só saem o
+  # Prometheus (9090) e o Grafana (3001), ambos presos ao 127.0.0.1.
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=2d"]
+    volumes: ["./observabilidade/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["127.0.0.1:9090:9090"]
+    restart: unless-stopped
+    profiles: [observabilidade]
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      # Painel só de leitura para qualquer um que chegue em localhost; o admin
+      # (admin/admin) é de desenvolvimento.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./observabilidade/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observabilidade/grafana/paineis:/var/lib/grafana/paineis:ro
+    ports: ["127.0.0.1:3001:3000"]
+    depends_on: [prometheus]
+    restart: unless-stopped
+    profiles: [observabilidade]
+
 volumes:
   postgres:
   redis:

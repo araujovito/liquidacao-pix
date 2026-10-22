@@ -5,7 +5,7 @@ COMPOSE := docker compose -f deployments/docker-compose.yml
 export DATABASE_URL ?= postgres://pix:pix@localhost:5432/pix?sslmode=disable
 export REDIS_URL ?= redis://localhost:6379/0
 
-.PHONY: caos carga-pico carga-sustentada infra sistema infra-parar migrar semear api relay worker teste teste-unidade lint fmt
+.PHONY: observabilidade caos carga-pico carga-sustentada infra sistema infra-parar migrar semear api relay worker teste teste-unidade lint fmt
 
 infra: ## sobe Postgres e Redis e espera ficarem saudáveis
 	$(COMPOSE) up -d --wait postgres redis
@@ -13,8 +13,11 @@ infra: ## sobe Postgres e Redis e espera ficarem saudáveis
 sistema: ## tudo em contêineres: postgres, redis, migrar, api, relay, worker
 	$(COMPOSE) --profile sistema up -d --build --wait
 
+observabilidade: ## sistema + Prometheus (:9090) e Grafana (:3001, painel "Liquidação PIX")
+	$(COMPOSE) --profile sistema --profile observabilidade up -d --build --wait
+
 infra-parar:
-	$(COMPOSE) --profile sistema down
+	$(COMPOSE) --profile sistema --profile observabilidade down
 
 migrar: infra
 	go run ./cmd/migrar

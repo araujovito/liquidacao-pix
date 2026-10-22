@@ -1,0 +1,16 @@
+# Coleta a cada 5 s. A descoberta é por DNS do Compose: cada serviço pode ter
+# várias réplicas (ex.: docker compose up --scale worker=3) e todas entram.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: api
+    dns_sd_configs: [{ names: [api], type: A, port: 9100, refresh_interval: 5s }]
+  - job_name: relay
+    dns_sd_configs: [{ names: [relay], type: A, port: 9100, refresh_interval: 5s }]
+  - job_name: worker
+    dns_sd_configs: [{ names: [worker], type: A, port: 9100, refresh_interval: 5s }]
+  # O conciliador também hospeda o estado da fila (outbox, idade, stream).
+  - job_name: conciliador
+    dns_sd_configs: [{ names: [conciliador], type: A, port: 9100, refresh_interval: 5s }]
