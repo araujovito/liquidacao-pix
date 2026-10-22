@@ -52,8 +52,19 @@ type gravadorDeStatus struct {
 }
 
 func (g *gravadorDeStatus) WriteHeader(c int) {
-	// net/http considera apenas o primeiro WriteHeader. Espelhar essa regra é
-	// essencial para a métrica descrever a resposta que de fato foi enviada.
+	// Respostas informativas (1xx, exceto 101) podem ser enviadas várias vezes
+	// ANTES do status final (ex.: 103 Early Hints). Elas passam adiante sem
+	// travar o gravador; travar nelas engolia o status final, e o cliente
+	// recebia 200 implícito no lugar do código que o handler escolheu.
+	if c >= 100 && c <= 199 && c != http.StatusSwitchingProtocols {
+		if !g.escreveu {
+			g.ResponseWriter.WriteHeader(c)
+		}
+		return
+	}
+	// net/http considera apenas o primeiro WriteHeader final. Espelhar essa
+	// regra é essencial para a métrica descrever a resposta que de fato foi
+	// enviada.
 	if g.escreveu {
 		return
 	}
@@ -61,6 +72,10 @@ func (g *gravadorDeStatus) WriteHeader(c int) {
 	g.codigo = c
 	g.ResponseWriter.WriteHeader(c)
 }
+
+// Unwrap expõe o ResponseWriter original ao http.ResponseController (Flush,
+// prazos de escrita), que não enxerga métodos de um wrapper.
+func (g *gravadorDeStatus) Unwrap() http.ResponseWriter { return g.ResponseWriter }
 
 func (g *gravadorDeStatus) Write(p []byte) (int, error) {
 	if !g.escreveu {
@@ -81,14 +96,27 @@ func (a *API) Middleware(proximo http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		inicio := time.Now()
 		g := &gravadorDeStatus{ResponseWriter: w, codigo: http.StatusOK}
-		proximo.ServeHTTP(g, r)
 
-		// r.Pattern é preenchido pelo roteador durante ServeHTTP, na mesma
-		// requisição; por isso só pode ser lido depois.
-		rota := r.Pattern
-		if rota == "" {
-			rota = "nao_encontrada"
-		}
-		a.duracao.WithLabelValues(rota, strconv.Itoa(g.codigo)).Observe(time.Since(inicio).Seconds())
+		// A observação vai num defer: handler que dá pânico também aconteceu e
+		// falhou, e sem isto sumiria das métricas, justamente o caso que o
+		// painel de 5xx existe para mostrar. O pânico continua subindo para o
+		// net/http tratá-lo (inclusive http.ErrAbortHandler).
+		defer func() {
+			panico := recover()
+			if panico != nil && !g.escreveu {
+				g.codigo = http.StatusInternalServerError
+			}
+			// r.Pattern é preenchido pelo roteador durante ServeHTTP, na mesma
+			// requisição; por isso só pode ser lido depois.
+			rota := r.Pattern
+			if rota == "" {
+				rota = "nao_encontrada"
+			}
+			a.duracao.WithLabelValues(rota, strconv.Itoa(g.codigo)).Observe(time.Since(inicio).Seconds())
+			if panico != nil {
+				panic(panico)
+			}
+		}()
+		proximo.ServeHTTP(g, r)
 	})
 }
