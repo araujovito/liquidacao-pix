@@ -3,6 +3,10 @@ name: liquidacao-pix
 services:
   postgres:
     image: postgres:17-alpine
+    # log_checkpoints: um checkpoint grava todas as páginas sujas de uma vez e
+    # pode parar escritas por instantes; o log permite relacionar pausas da
+    # API com checkpoints (docs/carga.md).
+    command: ["postgres", "-c", "log_checkpoints=on"]
     environment:
       POSTGRES_USER: pix
       POSTGRES_PASSWORD: pix # senha de desenvolvimento

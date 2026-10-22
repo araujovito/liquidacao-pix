@@ -51,6 +51,9 @@ configurações entre si, não como capacidade de produção.
 
 ### Carga sustentada, 1.500 pedidos/s por 3 min
 
+*Estas duas rodadas tinham descartes e hoje seriam reprovadas pelos critérios
+da revisão; valem para comparar 8 com 32 consumidores, não como capacidade.*
+
 | Consumidores no worker | Liquidação (mediana) | Fila ao fim | Atraso p50 / p95 | API p50 / p95 / p99 | Descartados |
 |---|---|---|---|---|---|
 | 8 | 1.410/s | 38.802 | 418 ms / 25,7 s | 5,0 / 772 / 1.470 ms | 3.303 |
@@ -84,7 +87,7 @@ Em todas as rodadas a conciliação fechou sem divergências.
 3. **A API tem uma cauda intermitente.** Na carga sustentada o p50 fica em
    3–5 ms, mas algumas rodadas têm p99 acima de 800 ms; outras, com a mesma
    configuração, ficam abaixo de 50 ms (ver abaixo). Ainda sem causa
-   confirmada.
+   confirmada; a investigação está em "Rodada limpa" (no fim).
 
 ## Impacto das validações do commit `d1fa55f`
 
@@ -127,9 +130,9 @@ Validação: make carga-pico (8 e 32 consumidores), make carga-sustentada
 Riscos restantes: cauda intermitente da API sem causa; uma rodada por
   configuração; pool de conexões não estudado.
 Revisar especialmente:
-  - a causa da cauda: checkpoints do Postgres (log_checkpoints) e
-    autoanalyze em banco novo são as hipóteses; os logs das rodadas foram
-    perdidos com o down dos contêineres;
+  - a causa da cauda: autoanalyze foi refutada e checkpoints não se alinham
+    (ver "Rodada limpa"); restam disputa de CPU/IO, pool de conexões e
+    tamanho do banco;
   - se o filtro por fase (end_to_end_id) exclui de fato o aquecimento;
   - o 1 erro do pico com 32 consumidores (o k6 não guardou o motivo: 5xx
     ou tempo esgotado?);
@@ -153,3 +156,51 @@ A carga sustentada passou a exigir zero erro, zero descarte e 100% de respostas
 para diagnóstico, mas não deve ser descrito como capacidade sustentada
 comprovada. É necessária uma nova rodada limpa para definir a maior taxa que
 atende esses critérios.
+
+## Rodada limpa: qual taxa sustentada passa nos critérios?
+
+Resposta à pendência da revisão: carga sustentada de 3 min, 32 consumidores,
+critérios do script (zero erro, zero descarte, 100% de 202, conciliação
+fechada), banco reaproveitado entre as rodadas.
+
+| Taxa planejada | Rodada | Descartados | API p50 / p95 / p99 | Passou? |
+|---|---|---|---|---|
+| 1.000/s | `…-2211` | 0 | 3,2 / 7,7 / 19,7 ms | **sim** |
+| 1.250/s | `…-2219` | 2.509 | 4,1 / 756 / 1.607 ms | não |
+| 1.250/s | `…-2223` | 2.024 | 4,1 / 603 / 1.221 ms | não |
+| 1.250/s | `…-2228` (autovacuum desligado) | 1.848 | 3,8 / 79 / 1.210 ms | não |
+| 1.500/s | `…-2215` | 926 | 4,4 / 38 / 331 ms | não |
+
+**Maior taxa sustentada comprovada nesta máquina: 1.000 pedidos/s.** É uma
+rodada limpa; acima disso nenhuma passou. A rodada de 1.500/s descartou
+menos que as de 1.250/s, então o limite não é uma função simples da taxa: o
+que reprova é a presença de pausas, não a média.
+
+### O que são as pausas
+
+Olhando a vazão de aceite segundo a segundo, as rodadas reprovadas têm
+pausas de 1 a ~14 s em que a API aceita 400–900/s em vez da taxa planejada,
+seguidas de um pico de recuperação. O k6 descarta pedidos durante a pausa
+porque os usuários virtuais ficam presos esperando resposta.
+
+Hipóteses testadas:
+
+- **`autoanalyze` do Postgres: refutada.** Numa rodada, o `autoanalyze` de
+  `lancamentos` terminou exatamente quando uma pausa de 14 s acabou. Com
+  `autovacuum=off` (só para o experimento), as pausas continuaram.
+- **Checkpoints: sem relação clara.** Com `log_checkpoints=on` (agora ligado
+  no compose), os checkpoints são disparados por volume de WAL
+  (`max_wal_size` padrão de 1 GB) e duram ~65 s. Uma pausa começou 19 s depois
+  de um checkpoint, outra coincidiu com o fim de um, e um checkpoint inteiro
+  passou sem pausa.
+- **Ainda abertas:** disputa de CPU/IO com outros processos da máquina (o
+  notebook rodava o Docker do Supabase e outras ferramentas durante os
+  testes; a carga média ficou entre 5 e 8), tamanho do pool de conexões da
+  API e crescimento do banco entre rodadas (chegou a 2 milhões de
+  transferências e 4 milhões de lançamentos).
+
+Conclusão honesta: o limite de 1.000/s vale **para esta máquina nas condições
+das rodadas**; a causa das pausas não foi encontrada. Uma medição melhor
+exigiria isolar a máquina e usar banco novo a cada rodada, o que o
+`rodar.sh` ainda não faz.
+
