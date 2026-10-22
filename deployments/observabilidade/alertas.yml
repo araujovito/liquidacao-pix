@@ -1,0 +1,40 @@
+groups:
+  - name: liquidacao-pix
+    rules:
+      # Os limites críticos são os mesmos do resumo do Grafana. O `for`
+      # elimina picos breves sem transformar tamanho da fila em sinal de saúde.
+      - alert: PixOutboxAntiga
+        expr: max(pix_outbox_mais_antiga_segundos) > 60
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: A publicação da outbox está atrasada
+          description: A linha mais antiga espera há mais de 60 segundos; verifique o relay e o Redis.
+
+      - alert: PixTransferenciaPendenteAntiga
+        expr: max(pix_transferencia_pendente_mais_antiga_segundos) > 120
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Há transferência pendente antiga
+          description: Uma transferência permanece pendente há mais de 120 segundos; localize o atraso entre outbox, stream e worker.
+
+      - alert: PixConciliacaoAtrasada
+        expr: time() - max(pix_conciliacao_ultima_execucao_timestamp_segundos) > 300
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: A conciliação deixou de concluir
+          description: Nenhuma conciliação terminou nos últimos 300 segundos, mais de dois intervalos normais.
+
+      - alert: PixEstadoColetaFalhando
+        expr: min by (fonte) (pix_estado_coleta_sucesso) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: A coleta de estado está falhando
+          description: O conciliador não consegue consultar {{ $labels.fonte }}; os números dessa fonte ficam ausentes, não zerados.

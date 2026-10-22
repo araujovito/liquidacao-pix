@@ -20,6 +20,25 @@ make carga-sustentada       # gera carga para o painel ter o que mostrar
 
 Tudo preso ao `127.0.0.1`: o painel não fica exposto na rede local.
 
+## Alertas
+
+O Prometheus carrega quatro regras provisionadas em
+`deployments/observabilidade/alertas.yml`. Elas aparecem em **Alerts** na
+interface do Prometheus mesmo sem um Alertmanager configurado; para enviar
+notificações fora do ambiente local, conecte um Alertmanager.
+
+| Alerta | Dispara quando | Espera antes de disparar |
+|---|---|---|
+| `PixOutboxAntiga` | a publicação mais antiga passa de 60 s | 1 min |
+| `PixTransferenciaPendenteAntiga` | uma transferência fica pendente por mais de 120 s | 2 min |
+| `PixConciliacaoAtrasada` | nenhuma conciliação conclui há mais de 300 s | 1 min |
+| `PixEstadoColetaFalhando` | a leitura do Postgres ou Redis falha | 1 min |
+
+Os limites de idade coincidem com os estados críticos do resumo do Grafana.
+O tempo de permanência evita alertar por um pico breve. Não há alerta por
+tamanho puro da fila: volume alto pode ser saudável, mas item antigo indica
+que o fluxo deixou de avançar.
+
 ## Programas e métricas
 
 | Programa | Métricas |

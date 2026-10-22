@@ -97,7 +97,9 @@ services:
   prometheus:
     image: prom/prometheus:v3.5.0
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=2d"]
-    volumes: ["./observabilidade/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    volumes:
+      - ./observabilidade/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observabilidade/alertas.yml:/etc/prometheus/alertas.yml:ro
     ports: ["127.0.0.1:9090:9090"]
     restart: unless-stopped
     profiles: [observabilidade]
