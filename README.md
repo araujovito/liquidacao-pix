@@ -181,3 +181,8 @@ make caos            # teste de caos contra o sistema em contêineres (~2 min)
 make carga-sustentada   # k6
 make testar-alertas  # regras de alerta com promtool
 ```
+
+## Licença
+
+[Apache License 2.0](LICENSE). Copyright 2026 Vitor Barbosa Araujo (ver [`NOTICE`](NOTICE)).
+
