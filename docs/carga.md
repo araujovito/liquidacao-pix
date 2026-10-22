@@ -109,9 +109,47 @@ rodadas "depois" estão em `sustentada-2026-10-21-2157.md` e `…-2159.md`; as
 "antes" rodaram numa cópia do repositório naquele commit e não geraram
 relatório aqui.
 
+## Custo da cadeia de auditoria (fase 7)
+
+A fase 7 acrescenta, a cada liquidação, duas linhas em `auditoria` e duas
+atualizações de cabeça em `contas` (ADR 0006), na transação que já existia. A
+carga sustentada (1.000/s, 3 min, 32 consumidores, 1.000 contas) rodou uma vez
+em banco novo **antes** (`fde4b42`, numa cópia do repositório) e uma vez
+**depois** (`2122bb3`), em sequência e na mesma máquina:
+
+| Versão | API p50 / p95 / p99 / máx. | Atraso aceite→liquidação p50 / p95 / p99 | Descartados | Erros |
+|---|---|---|---|---|
+| antes (`fde4b42`) | 2,9 / 4,6 / 8,1 ms / 1.002 ms | 14,5 / 24,5 / 29,0 ms | 0 | 1 |
+| depois (`2122bb3`) | 3,1 / 6,3 / 27,4 ms / 586 ms | 17,0 / 30,1 / 58,6 ms | 163 | 0 |
+
+Relatórios: `sustentada-2026-10-22-2050-base-fde4b42.md` (antes) e
+`sustentada-2026-10-22-2046.md` (depois). **As duas rodadas reprovam o critério
+da carga sustentada** (a primeira por 1 erro HTTP, a segunda por 163 pedidos
+descartados): as pausas de causa desconhecida aparecem nas duas (máximos de 1,0 s
+e 0,6 s).
+
+O que se pode dizer, e o que não:
+
+- **Na mediana, o custo é pequeno e na direção esperada:** +0,2 ms no p50 da
+  API e +2,5 ms no atraso até a liquidação, que é o que duas inserções e duas
+  atualizações a mais em linhas já travadas custam. A vazão não mudou: aceite e
+  liquidação mantiveram 1.000/s.
+- **A cauda piorou, mas não dá para atribuí-la à cadeia.** O p99 da API
+  (8,1 → 27,4 ms) e o atraso p99 (29 → 58,6 ms) subiram, e foram 163
+  descartes contra 0. A seção anterior mostra que a variação entre rodadas da
+  mesma versão (p95 de 29 ms a 827 ms) já é maior que isso. Com uma rodada por
+  versão, **não sei** se parte desse aumento é da cadeia.
+- **Os 163 descartes** (0,09% dos pedidos) vêm de uma pausa em que os usuários
+  virtuais do k6 se esgotaram; a cadeia não é a causa conhecida, mas também não
+  está descartada.
+
+Para decidir, faltam várias rodadas por versão, de preferência em máquina
+isolada. Não escrevi no README que a cadeia "não tem custo", porque isso não foi
+medido.
+
 ## Limitações
 
-- Uma rodada por configuração nos cenários de 3 min; a cauda intermitente
+- Uma rodada por configuração nos cenários de 3 min (inclusive a comparação da fase 7); a cauda intermitente
   (item 3) mostra que isso não basta para afirmar diferenças de p95/p99.
 - Tudo na mesma máquina: o k6 também consome CPU.
 - O pool de conexões do Postgres é o padrão do pgx (máx(4, CPUs) = 16 por

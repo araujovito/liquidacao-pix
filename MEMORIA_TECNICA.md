@@ -172,6 +172,11 @@ dezenas de milhares de mensagens. É o que o teste de carga vai medir.
   exige que a varredura o ache). Sem ele, "não achou" não significaria nada.
 - `docker compose` com `COMPOSE_PROJECT_NAME` sobrepõe o `name:` do arquivo:
   permitiu rodar caos e carga em volumes novos sem tocar nos antigos.
+- **Custo da cadeia, medido contra o commit anterior** (`fde4b42`, cópia do
+  repositório, banco novo, 1.000/s por 3 min): vazão igual, mediana quase igual
+  (API p50 2,9 → 3,1 ms), cauda pior (p99 8,1 → 27,4 ms, 163 descartes), e as duas
+  rodadas reprovam o critério da carga sustentada. Uma rodada por versão: não dá
+  para dizer quanto da cauda é da cadeia. Está em `docs/carga.md`.
 - Caos com a trilha: ver "Estado atual". O banco de desenvolvimento anterior
   (112 mil transferências sem trilha) continua no volume `liquidacao-pix_postgres`
   e é acusado pelo verificador, como esperado.

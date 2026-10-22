@@ -128,6 +128,7 @@ como capacidade de produção. Método e relatórios completos em
 | Pico (até 4.000 pedidos/s) | o conjunto satura em ~2.500–2.900 pedidos/s; API e worker disputam o mesmo Postgres |
 | Worker com 8 consumidores a 1.500/s | gargalo: fila cresce sem parar. **O padrão passou a 32** |
 | Rastreamento a 100% de amostragem | sem custo mensurável a 1.000/s |
+| Cadeia de auditoria (fase 7), 1.000/s por 3 min, uma rodada antes e uma depois | mediana quase igual (API p50 2,9 → 3,1 ms; atraso até liquidar p50 14,5 → 17,0 ms; vazão 1.000/s nas duas). **Cauda pior** (API p99 8,1 → 27,4 ms; 163 pedidos descartados pelo k6) e **as duas rodadas reprovam o critério** da carga sustentada; com uma rodada por versão não dá para atribuir a cauda à cadeia. Ver [`docs/carga.md`](docs/carga.md) |
 
 **Limites do que foi medido, por escrito:** acima de ~1.250 pedidos/s a API tem
 pausas de 1 a 14 s cuja causa **não** encontrei (o `autoanalyze` do Postgres foi

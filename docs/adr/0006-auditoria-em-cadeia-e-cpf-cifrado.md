@@ -169,8 +169,11 @@ e que não é detectada quando não existe.
 
 ## Consequências
 - Liquidar passa a gravar duas entradas a mais por transferência, na transação
-  existente. O custo precisa ser **medido** a 1.000 pedidos/s e registrado, não
-  suposto; se for relevante, o ADR é revisto.
+  existente. Medido a 1.000 pedidos/s (uma rodada antes, uma depois): a vazão não
+  mudou e a mediana subiu pouco (API p50 +0,2 ms; atraso até liquidar p50 +2,5 ms),
+  mas a cauda piorou e **não foi possível atribuí-la à cadeia** com tão poucas
+  rodadas (`docs/carga.md`). A decisão de não usar cadeia global não depende desse
+  número; a de aceitar o custo, sim, e fica provisória até haver mais rodadas.
 - `cmd/worker` ganha dependência do chaveiro; `cmd/semear` e `cmd/auditar` também.
 - O `make demo` ganha dois passos: adulterar uma entrada com os gatilhos
   desligados e ver o verificador acusar; cadastrar e apagar um CPF e ver a
