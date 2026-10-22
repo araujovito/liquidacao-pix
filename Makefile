@@ -39,7 +39,7 @@ infra-parar:
 	$(COMPOSE) --profile sistema --profile observabilidade down
 
 auditar: ## verifica a cadeia de HMAC da auditoria (ADR 0006); sai com 1 se achar adulteração
-	go run ./cmd/auditar
+	@go run ./cmd/auditar $(ARGS)
 
 migrar: infra
 	go run ./cmd/migrar
@@ -56,7 +56,7 @@ relay: migrar
 worker: migrar
 	go run ./cmd/worker
 
-caos: ## teste de caos contra o sistema em contêineres (~2 min)
+caos: ## teste de caos contra o sistema em contêineres (~2 min); precisa de um banco criado depois da fase 7
 	$(MAKE) sistema
 	go run ./cmd/semear -contas 100 -saldo 1000000
 	go run ./tests/caos

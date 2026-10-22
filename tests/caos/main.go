@@ -11,6 +11,7 @@
 //   - toda transferência aceita (202) existe e chegou a status final;
 //   - nenhuma ficou PENDENTE;
 //   - a conciliação fecha (nenhuma liquidada duas vezes, soma global zero);
+//   - a cadeia de auditoria verifica (cada decisão tem sua entrada assinada);
 //   - o dinheiro dos clientes é o mesmo do início.
 //
 // Uso: make sistema && make semear && go run ./tests/caos
@@ -32,7 +33,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/araujovito/liquidacao-pix/internal/auditoria"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
+	"github.com/araujovito/liquidacao-pix/internal/usecase"
 )
 
 var (
@@ -239,6 +242,27 @@ func verificar(ctx context.Context, pool *pgxpool.Pool, aceitas []string, antes 
 	for _, d := range divs {
 		erro("conciliação: %s %s", d.Tipo, d.Detalhe)
 	}
+
+	// A trilha também sobrevive ao caos: SIGKILL no worker e no Postgres no meio
+	// de uma liquidação não pode deixar entrada sem lançamento, nem lançamento
+	// sem entrada, nem cadeia com buraco.
+	chaveiro, err := auditoria.ChaveiroDoAmbiente()
+	if err != nil {
+		return err
+	}
+	trilha, err := usecase.VerificarAuditoria(ctx, repository.New(pool), chaveiro)
+	if err != nil {
+		return err
+	}
+	for i, p := range trilha.Problemas {
+		if i < 10 {
+			erro("auditoria: %s", p)
+		}
+	}
+	if n := len(trilha.Problemas); n > 10 {
+		erro("auditoria: e mais %d problemas", n-10)
+	}
+	logf("auditoria: %d entradas em %d contas, %d problemas", trilha.Entradas, trilha.Contas, len(trilha.Problemas))
 
 	depois, err := dinheiroDosClientes(ctx, pool)
 	if err != nil {
