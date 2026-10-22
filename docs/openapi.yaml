@@ -126,6 +126,8 @@ paths:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
+                required: [status]
                 properties: { status: { type: string, enum: [ok] } }
         '503': { $ref: '#/components/responses/BancoIndisponivel' }
 components:
@@ -156,6 +158,7 @@ components:
           description: Valor em centavos (inteiro; nunca ponto flutuante). Máximo R$ 1.000.000,00.
     Transferencia:
       type: object
+      additionalProperties: false
       required: [id, end_to_end_id, valor_centavos, status, criada_em]
       properties:
         id: { type: string, format: uuid }
@@ -176,6 +179,7 @@ components:
           description: Presente só quando o status é final.
     Problema:
       type: object
+      additionalProperties: false
       description: Problem details (RFC 9457).
       required: [type, title, status, detail]
       properties:
