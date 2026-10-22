@@ -8,6 +8,8 @@ export REDIS_URL ?= redis://localhost:6379/0
 # ambiente, defina as suas antes de chamar o make.
 export AUDITORIA_CHAVES ?= dev1:a0a1a2a3a4a5a6a7a8a9aaabacadaeafa0a1a2a3a4a5a6a7a8a9aaabacadaeaf
 export AUDITORIA_CHAVE_ATUAL ?= dev1
+export CPF_CHAVES_MESTRAS ?= dev1:b0b1b2b3b4b5b6b7b8b9babbbcbdbebfb0b1b2b3b4b5b6b7b8b9babbbcbdbebf
+export CPF_CHAVE_MESTRA_ATUAL ?= dev1
 
 .PHONY: lint-openapi demo testar-demo testar-alertas observabilidade caos carga-pico carga-sustentada auditar infra sistema infra-parar migrar semear api relay worker teste teste-unidade lint fmt
 

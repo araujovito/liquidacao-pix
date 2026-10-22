@@ -1,11 +1,15 @@
 package usecase_test
 
 import (
+	"bytes"
+	"errors"
 	"slices"
 	"testing"
 
 	"github.com/araujovito/liquidacao-pix/internal/auditoria"
+	"github.com/araujovito/liquidacao-pix/internal/dadospessoais"
 	"github.com/araujovito/liquidacao-pix/internal/domain"
+	"github.com/araujovito/liquidacao-pix/internal/repository"
 	"github.com/araujovito/liquidacao-pix/internal/testinfra"
 )
 
@@ -264,4 +268,58 @@ func TestCabecaQueNaoApontaParaAUltimaEntradaEAcusada(t *testing.T) {
 	               auditoria_mac = (SELECT mac FROM auditoria WHERE conta_id = $1 AND seq = 2)
 	             WHERE id = $1`, beto)
 	esperarSo(t, c.verificar(ch), auditoria.ProblemaCabeca)
+}
+
+// O ponto do crypto-shredding: apagar o dado pessoal não toca o histórico
+// financeiro. A cadeia continua verificando, a conciliação continua fechando
+// e nem uma linha de auditoria ou de lançamento muda.
+func TestApagarCPFNaoMexeNoHistoricoFinanceiro(t *testing.T) {
+	c, ana, beto, ch := cadeiaDeTres(t)
+	m, err := dadospessoais.NovasMestras("m1", map[string][]byte{"m1": bytes.Repeat([]byte{7}, 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.repo.CadastrarCPF(c.ctx, m, "beto@teste", "529.982.247-25"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := c.repo.CPFDaConta(c.ctx, m, "beto@teste"); err != nil || got != "52998224725" {
+		t.Fatalf("CPF antes do apagamento: %q, %v", got, err)
+	}
+	antes := c.impressaoDoHistorico()
+
+	if err := c.repo.ApagarCPF(c.ctx, "beto@teste"); err != nil {
+		t.Fatal(err)
+	}
+
+	if depois := c.impressaoDoHistorico(); depois != antes {
+		t.Fatal("o apagamento do CPF alterou lançamentos ou auditoria")
+	}
+	if ps := c.verificar(ch); len(ps) != 0 {
+		t.Fatalf("a cadeia deixou de verificar depois do apagamento: %v", ps)
+	}
+	c.conciliado()
+	if _, err := c.repo.CPFDaConta(c.ctx, m, "beto@teste"); !errors.Is(err, repository.ErrCPFApagado) {
+		t.Fatalf("CPF ainda legível depois do apagamento: %v", err)
+	}
+	// A conta continua liquidando normalmente, e a cadeia continua crescendo.
+	if _, err := c.liq.Liquidar(c.ctx, c.pedir(ana, beto, 10).ID); err != nil {
+		t.Fatal(err)
+	}
+	if ps := c.verificar(ch); len(ps) != 0 {
+		t.Fatalf("cadeia depois de liquidar com a conta apagada: %v", ps)
+	}
+}
+
+// impressaoDoHistorico resume lançamentos e auditoria num texto comparável.
+func (c *cenario) impressaoDoHistorico() string {
+	c.t.Helper()
+	var s string
+	err := c.pool.QueryRow(c.ctx, `
+		SELECT coalesce((SELECT string_agg(l::text, '|' ORDER BY l.id) FROM lancamentos l), '')
+		    || '#' ||
+		       coalesce((SELECT string_agg(a::text, '|' ORDER BY a.conta_id, a.seq) FROM auditoria a), '')`).Scan(&s)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	return s
 }

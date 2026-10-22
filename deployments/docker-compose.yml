@@ -19,6 +19,11 @@ x-auditoria: &auditoria
   AUDITORIA_CHAVES: ${AUDITORIA_CHAVES:-dev1:a0a1a2a3a4a5a6a7a8a9aaabacadaeafa0a1a2a3a4a5a6a7a8a9aaabacadaeaf}
   AUDITORIA_CHAVE_ATUAL: ${AUDITORIA_CHAVE_ATUAL:-dev1}
 
+# Chave-mestra do CPF, também de DESENVOLVIMENTO. Só a ferramenta titular a usa.
+x-cpf: &cpf
+  CPF_CHAVES_MESTRAS: ${CPF_CHAVES_MESTRAS:-dev1:b0b1b2b3b4b5b6b7b8b9babbbcbdbebfb0b1b2b3b4b5b6b7b8b9babbbcbdbebf}
+  CPF_CHAVE_MESTRA_ATUAL: ${CPF_CHAVE_MESTRA_ATUAL:-dev1}
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -77,6 +82,17 @@ services:
     entrypoint: ["/app/auditar"]
     environment:
       <<: [*ambiente, *auditoria]
+    depends_on:
+      migrar: { condition: service_completed_successfully }
+    profiles: [ferramentas]
+
+  # CPF do titular: `docker compose run --rm titular cadastrar-cpf -chave ...`.
+  titular:
+    image: liquidacao-pix:dev
+    entrypoint: ["/app/titular"]
+    environment:
+      <<: [*ambiente, *cpf]
+    stdin_open: true
     depends_on:
       migrar: { condition: service_completed_successfully }
     profiles: [ferramentas]

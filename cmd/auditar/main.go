@@ -20,11 +20,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 
 	"github.com/araujovito/liquidacao-pix/internal/auditoria"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
 )
+
+// maxLinhas limita quantos achados são impressos: um banco criado antes da
+// fase 7 acusa uma decisão sem entrada por transferência, e dezenas de
+// milhares de linhas escondem o que importa. O resumo por tipo é completo.
+const maxLinhas = 50
 
 func main() {
 	imprimirAncora := flag.Bool("ancora", false, "imprime a cabeça de cada cadeia (conta seq mac) se a verificação passar")
@@ -91,10 +98,20 @@ func executar(out, errOut io.Writer, imprimirAncora bool, arquivoAncora string) 
 	}
 
 	if len(problemas) > 0 {
-		for _, p := range problemas {
-			fmt.Fprintln(errOut, p)
+		porTipo := map[string]int{}
+		for i, p := range problemas {
+			porTipo[p.Tipo]++
+			if i < maxLinhas {
+				fmt.Fprintln(errOut, p)
+			}
 		}
-		fmt.Fprintf(errOut, "auditar: %d problema(s) em %d conta(s), %d entradas lidas\n", len(problemas), contas, entradas)
+		if len(problemas) > maxLinhas {
+			fmt.Fprintf(errOut, "... e mais %d (mostrados os %d primeiros)\n", len(problemas)-maxLinhas, maxLinhas)
+		}
+		for _, tipo := range slices.Sorted(maps.Keys(porTipo)) {
+			fmt.Fprintf(errOut, "auditar: %6d do tipo %s\n", porTipo[tipo], tipo)
+		}
+		fmt.Fprintf(errOut, "auditar: %d problema(s), %d contas, %d entradas lidas\n", len(problemas), contas, entradas)
 		return 1
 	}
 	fmt.Fprintf(errOut, "auditar: íntegra: %d contas, %d entradas\n", contas, entradas)
