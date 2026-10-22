@@ -33,7 +33,11 @@ func main() {
 	host, _ := os.Hostname()
 	fila := queue.New(rdb, "")
 	liq := usecase.Liquidador{Repo: repository.New(pool)}
-	n := processo.Inteiro("WORKERS", 8)
+	// 32: com 8, o worker liquidava ~1.400/s e não acompanhava 1.500/s de
+	// entrada (docs/carga.md). Cada liquidação passa a maior parte do tempo
+	// esperando o banco, então mais consumidores rendem mais até o limite do
+	// pool de conexões.
+	n := processo.Inteiro("WORKERS", 32)
 
 	var wg sync.WaitGroup
 	for i := range n {

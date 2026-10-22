@@ -62,7 +62,9 @@ services:
   worker:
     image: liquidacao-pix:dev
     command: ["/app/worker"]
-    environment: *ambiente
+    environment:
+      <<: *ambiente
+      WORKERS: ${WORKERS:-32} # consumidores por processo; ver docs/carga.md
     restart: unless-stopped
     depends_on:
       migrar: { condition: service_completed_successfully }
