@@ -32,7 +32,7 @@ type cenario struct {
 func novoCenario(t *testing.T) *cenario {
 	pool := testinfra.Postgres(t)
 	repo := repository.New(pool)
-	return &cenario{t: t, ctx: context.Background(), pool: pool, repo: repo, liq: usecase.Liquidador{Repo: repo}}
+	return &cenario{t: t, ctx: context.Background(), pool: pool, repo: repo, liq: usecase.Liquidador{Repo: repo, Auditoria: testinfra.Chaveiro(t)}}
 }
 
 func (c *cenario) proximoE2E() string { c.seq++; return e2e(c.seq) }

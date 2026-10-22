@@ -1,5 +1,24 @@
 name: liquidacao-pix
 
+# Variáveis comuns aos programas. As chaves da auditoria ficam de fora de
+# propósito: só quem assina (worker) ou verifica (auditar) precisa delas, e a
+# API, o relay e o conciliador não devem poder forjar uma entrada.
+x-ambiente: &ambiente
+    DATABASE_URL: postgres://pix:pix@postgres:5432/pix?sslmode=disable
+    REDIS_URL: redis://redis:6379/0
+    # Rastreamento: desligado (vazio) por padrão; `make observabilidade` o
+    # liga apontando para o Jaeger. Sob carga pesada, baixe a razão (ex.:
+    # OTEL_TRACES_SAMPLER_ARG=0.01): amostrar tudo tem custo.
+    OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+    OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1}
+
+# Chaves de DESENVOLVIMENTO (32 bytes em hexadecimal), públicas neste arquivo.
+# Em outro ambiente, defina as suas e nunca as versione.
+x-auditoria: &auditoria
+  AUDITORIA_CHAVES: ${AUDITORIA_CHAVES:-dev1:a0a1a2a3a4a5a6a7a8a9aaabacadaeafa0a1a2a3a4a5a6a7a8a9aaabacadaeaf}
+  AUDITORIA_CHAVE_ATUAL: ${AUDITORIA_CHAVE_ATUAL:-dev1}
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -37,18 +56,20 @@ services:
     build: { context: .., dockerfile: deployments/Dockerfile }
     image: liquidacao-pix:dev
     command: ["/app/migrar"]
-    environment: &ambiente
-      DATABASE_URL: postgres://pix:pix@postgres:5432/pix?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
-      # Rastreamento: desligado (vazio) por padrão; `make observabilidade` o
-      # liga apontando para o Jaeger. Sob carga pesada, baixe a razão (ex.:
-      # OTEL_TRACES_SAMPLER_ARG=0.01): amostrar tudo tem custo.
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
-      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1}
+    environment: *ambiente
     depends_on:
       postgres: { condition: service_healthy }
     profiles: [sistema]
+
+  # Cria as contas de exemplo (`make demo`). Fora do `up`: só roda por `run`.
+  semear:
+    image: liquidacao-pix:dev
+    entrypoint: ["/app/semear"]
+    environment:
+      <<: [*ambiente, *auditoria]
+    depends_on:
+      migrar: { condition: service_completed_successfully }
+    profiles: [ferramentas]
 
   api:
     image: liquidacao-pix:dev
@@ -73,7 +94,7 @@ services:
     image: liquidacao-pix:dev
     command: ["/app/worker"]
     environment:
-      <<: *ambiente
+      <<: [*ambiente, *auditoria]
       WORKERS: ${WORKERS:-32} # consumidores por processo; ver docs/carga.md
     restart: unless-stopped
     depends_on:

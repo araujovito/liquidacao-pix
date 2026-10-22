@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/araujovito/liquidacao-pix/internal/auditoria"
 	"github.com/araujovito/liquidacao-pix/internal/domain"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
 	"github.com/araujovito/liquidacao-pix/internal/usecase"
@@ -42,7 +43,11 @@ func semear(n int, saldo domain.Centavos) error {
 	}
 	defer pool.Close()
 	repo := repository.New(pool)
-	liq := usecase.Liquidador{Repo: repo}
+	chaveiro, err := auditoria.ChaveiroDoAmbiente()
+	if err != nil {
+		return err
+	}
+	liq := usecase.Liquidador{Repo: repo, Auditoria: chaveiro}
 
 	// ISPB fictício 99999999, data e hora atuais e, nos 11 caracteres livres,
 	// o número da conta + 7 dígitos base 36 do relógio em nanossegundos: rodar

@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/araujovito/liquidacao-pix/internal/auditoria"
 	"github.com/araujovito/liquidacao-pix/internal/domain"
 	"github.com/araujovito/liquidacao-pix/internal/telemetria"
 )
@@ -154,6 +156,10 @@ type ContaTravada struct {
 	ID      int64
 	Saldo   domain.Centavos
 	Tecnica bool
+	// Cabeça da cadeia de auditoria da conta (ADR 0006): posição e MAC da
+	// última entrada. Lidas sob a mesma trava que protege o saldo.
+	AuditoriaSeq int64
+	AuditoriaMAC [auditoria.TamanhoMAC]byte
 }
 
 // TxLiquidacao expõe as operações de liquidação dentro de uma transação.
@@ -190,9 +196,11 @@ func (t TxLiquidacao) TravarContas(ctx context.Context, ids ...int64) (map[int64
 	for _, id := range ordenados {
 		var c ContaTravada
 		var saldo int64
+		var mac []byte
 		err := t.tx.QueryRow(ctx,
-			`SELECT id, saldo_centavos, tecnica FROM contas WHERE id = $1 FOR UPDATE`, id,
-		).Scan(&c.ID, &saldo, &c.Tecnica)
+			`SELECT id, saldo_centavos, tecnica, auditoria_seq, auditoria_mac
+			   FROM contas WHERE id = $1 FOR UPDATE`, id,
+		).Scan(&c.ID, &saldo, &c.Tecnica, &c.AuditoriaSeq, &mac)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("conta %d: %w", id, ErrNaoEncontrada)
 		}
@@ -200,6 +208,10 @@ func (t TxLiquidacao) TravarContas(ctx context.Context, ids ...int64) (map[int64
 			return nil, err
 		}
 		c.Saldo = domain.Centavos(saldo)
+		if len(mac) != auditoria.TamanhoMAC {
+			return nil, fmt.Errorf("conta %d: cabeça da auditoria com %d bytes", id, len(mac))
+		}
+		copy(c.AuditoriaMAC[:], mac)
 		contas[id] = c
 	}
 	return contas, nil
@@ -223,12 +235,65 @@ func (t TxLiquidacao) GravarLancamentos(ctx context.Context, ls []domain.Lancame
 
 // Finalizar grava o status final. A condição status = 'PENDENTE' é redundante
 // com a trava, mas protege contra uso fora de ordem.
-func (t TxLiquidacao) Finalizar(ctx context.Context, id string, s domain.Status, motivo string) (domain.Transferencia, error) {
+//
+// decidida é o instante da decisão, produzido pela aplicação uma única vez: o
+// mesmo valor vai para finalizada_em e para as entradas de auditoria, em vez de
+// o banco e a aplicação terem cada um o seu relógio para a mesma decisão.
+func (t TxLiquidacao) Finalizar(ctx context.Context, id string, s domain.Status, motivo string, decidida time.Time) (domain.Transferencia, error) {
 	return lerTransferencia(t.tx.QueryRow(ctx, `
 		UPDATE transferencias
-		   SET status = $2, motivo_rejeicao = nullif($3, ''), finalizada_em = now()
+		   SET status = $2, motivo_rejeicao = nullif($3, ''), finalizada_em = $4
 		 WHERE id = $1 AND status = 'PENDENTE'
-		RETURNING `+colunasTransferencia, id, string(s), motivo))
+		RETURNING `+colunasTransferencia, id, string(s), motivo, decidida))
+}
+
+// GravarAuditoria acrescenta a decisão final de t à cadeia de cada conta
+// envolvida e avança a cabeça das duas, tudo na transação da liquidação. As
+// contas já estão travadas (TravarContas), então ninguém mais avança essas
+// cadeias até o commit. Se a transação desfaz, as entradas também.
+func (t TxLiquidacao) GravarAuditoria(ctx context.Context, ch *auditoria.Chaveiro, final domain.Transferencia, contas map[int64]ContaTravada) error {
+	if ch == nil {
+		return auditoria.ErrSemChaveiro
+	}
+	if final.FinalizadaEm == nil {
+		return errors.New("auditoria: transferência sem instante de decisão")
+	}
+	var motivo *string
+	if final.Status == domain.Rejeitada {
+		motivo = &final.MotivoRejeicao
+	}
+	tid, err := uuid.Parse(final.ID)
+	if err != nil {
+		return fmt.Errorf("auditoria: id da transferência: %w", err)
+	}
+
+	b := &pgx.Batch{}
+	for _, id := range []int64{final.PagadorID, final.RecebedorID} {
+		c, ok := contas[id]
+		if !ok {
+			return fmt.Errorf("auditoria: conta %d não foi travada", id)
+		}
+		e := auditoria.Entrada{
+			ContaID: id, Seq: c.AuditoriaSeq + 1,
+			TransferenciaID: tid, Status: string(final.Status), Motivo: motivo,
+			PagadorID: final.PagadorID, RecebedorID: final.RecebedorID,
+			ValorCentavos: int64(final.Valor),
+			DecididaEm:    final.FinalizadaEm.UTC(),
+			MACAnterior:   c.AuditoriaMAC,
+		}
+		if err := ch.Assinar(&e); err != nil {
+			return err
+		}
+		b.Queue(`INSERT INTO auditoria
+			(conta_id, seq, transferencia_id, status, motivo, pagador_id, recebedor_id,
+			 valor_centavos, decidida_em, chave_id, mac_anterior, mac)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+			e.ContaID, e.Seq, e.TransferenciaID, e.Status, e.Motivo, e.PagadorID, e.RecebedorID,
+			e.ValorCentavos, e.DecididaEm, e.ChaveID, e.MACAnterior[:], e.MAC[:])
+		b.Queue(`UPDATE contas SET auditoria_seq = $2, auditoria_mac = $3 WHERE id = $1`,
+			e.ContaID, e.Seq, e.MAC[:])
+	}
+	return t.tx.SendBatch(ctx, b).Close()
 }
 
 // ContarPorStatus conta as transferências em cada status.

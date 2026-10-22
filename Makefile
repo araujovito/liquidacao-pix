@@ -4,6 +4,10 @@ COMPOSE := docker compose -f deployments/docker-compose.yml
 # defina DATABASE_URL antes de chamar o make.
 export DATABASE_URL ?= postgres://pix:pix@localhost:5432/pix?sslmode=disable
 export REDIS_URL ?= redis://localhost:6379/0
+# Chave de auditoria de DESENVOLVIMENTO (a mesma do docker-compose). Em outro
+# ambiente, defina as suas antes de chamar o make.
+export AUDITORIA_CHAVES ?= dev1:a0a1a2a3a4a5a6a7a8a9aaabacadaeafa0a1a2a3a4a5a6a7a8a9aaabacadaeaf
+export AUDITORIA_CHAVE_ATUAL ?= dev1
 
 .PHONY: lint-openapi demo testar-demo testar-alertas observabilidade caos carga-pico carga-sustentada infra sistema infra-parar migrar semear api relay worker teste teste-unidade lint fmt
 

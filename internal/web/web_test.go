@@ -32,7 +32,7 @@ func novoAmbiente(t *testing.T) *ambiente {
 	pool := testinfra.Postgres(t)
 	repo := repository.New(pool)
 	ctx := context.Background()
-	liq := usecase.Liquidador{Repo: repo}
+	liq := usecase.Liquidador{Repo: repo, Auditoria: testinfra.Chaveiro(t)}
 	for i, chave := range []string{"ana@pix", "beto@pix"} {
 		id, err := repo.CriarConta(ctx, chave, chave)
 		if err != nil {

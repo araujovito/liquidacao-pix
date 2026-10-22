@@ -66,7 +66,7 @@ for _ in $(seq 30); do curl -sf "$API/saude" >/dev/null && break; sleep 1; done
 curl -sf "$API/saude" >/dev/null || falha "a API não respondeu em $API/saude"
 
 passo "2. Semeando 10 contas com R\$ 10.000,00 cada (o dinheiro entra pela conta técnica de liquidez, como lançamento)"
-if ! $COMPOSE run --rm --no-deps --entrypoint /app/semear migrar -contas 10 -saldo 1000000 >"$LOG" 2>&1; then
+if ! $COMPOSE run --rm --no-deps semear -contas 10 -saldo 1000000 >"$LOG" 2>&1; then
   cat "$LOG" >&2
   falha "não foi possível semear as contas"
 fi

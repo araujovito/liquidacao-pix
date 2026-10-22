@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/araujovito/liquidacao-pix/internal/domain"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
@@ -104,7 +105,7 @@ func TestCancelamentoDepoisDosLancamentosDesfazTudo(t *testing.T) {
 		// Cancela depois dos INSERTs e UPDATEs, mas antes do status final e do
 		// commit. A transação inteira precisa desaparecer.
 		cancelar()
-		_, err = tx.Finalizar(ctx, travada.ID, decisao.Status, decisao.Motivo)
+		_, err = tx.Finalizar(ctx, travada.ID, decisao.Status, decisao.Motivo, time.Now().UTC().Truncate(time.Microsecond))
 		return err
 	})
 	if !chegouAposGravacao {

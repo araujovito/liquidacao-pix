@@ -17,6 +17,7 @@ import (
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 
 	"github.com/araujovito/liquidacao-pix/db"
+	"github.com/araujovito/liquidacao-pix/internal/auditoria"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
 )
 
@@ -112,4 +113,19 @@ func Redis(t *testing.T) (*redis.Client, string) {
 	rdb := redis.NewClient(opt)
 	t.Cleanup(func() { _ = rdb.Close() })
 	return rdb, fmt.Sprintf("teste%d:", contadorDB.Add(1))
+}
+
+// Chaveiro devolve um chaveiro de auditoria só para testes (a chave é fixa e
+// pública, e por isso nunca deve aparecer fora daqui).
+func Chaveiro(t *testing.T) *auditoria.Chaveiro {
+	t.Helper()
+	chave := make([]byte, auditoria.TamanhoChave)
+	for i := range chave {
+		chave[i] = byte(0xA0 + i%16)
+	}
+	c, err := auditoria.NovoChaveiro("teste", map[string][]byte{"teste": chave})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
 }

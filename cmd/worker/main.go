@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/araujovito/liquidacao-pix/internal/auditoria"
 	"github.com/araujovito/liquidacao-pix/internal/metricas"
 	"github.com/araujovito/liquidacao-pix/internal/processo"
 	"github.com/araujovito/liquidacao-pix/internal/queue"
@@ -36,7 +37,11 @@ func main() {
 	fila := queue.New(rdb, "")
 	reg := processo.Metricas(ctx, log)
 	wm := metricas.NovoWorker(reg)
-	liq := usecase.Liquidador{Repo: repository.New(pool), AoFinalizar: wm.Finalizada}
+	chaveiro, err := auditoria.ChaveiroDoAmbiente()
+	if err != nil {
+		processo.Sair(log, "worker", err)
+	}
+	liq := usecase.Liquidador{Repo: repository.New(pool), Auditoria: chaveiro, AoFinalizar: wm.Finalizada}
 	// 32: com 8, o worker liquidava ~1.400/s e não acompanhava 1.500/s de
 	// entrada (docs/carga.md). Cada liquidação passa a maior parte do tempo
 	// esperando o banco, então mais consumidores rendem mais até o limite do
