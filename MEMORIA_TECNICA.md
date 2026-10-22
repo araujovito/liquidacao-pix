@@ -10,17 +10,17 @@ tentado. É atualizado no mesmo commit da mudança que descreve.
 
 ## Estado atual
 
-Fases 0, 1 e 2 concluídas: livro-razão, liquidação idempotente, conciliação,
-API de ingestão com outbox. As transferências aceitas ficam `PENDENTE` e
-acumulam na outbox: **ainda não há relay nem worker** (fase 3).
+Fases 0 a 3 concluídas: o fluxo completo API → outbox → relay → Redis Stream
+→ worker funciona, com retentativas, mensagens mortas e recuperação de
+mensagens perdidas no Redis. Próximo passo: fase 4 (teste de caos e runbook).
 
 ## Ambiente
 
 - Go 1.27 (o `go.mod` declara a versão mínima).
 - Docker com Compose v2 para Postgres 17 e Redis 7.
 - Nenhuma credencial real: todas as senhas do `docker-compose` são de
-  desenvolvimento. O código não tem URL padrão de banco; o `Makefile` exporta
-  `DATABASE_URL` de desenvolvimento.
+  desenvolvimento. O código não tem URL padrão de banco nem de Redis; o
+  `Makefile` exporta `DATABASE_URL` e `REDIS_URL` de desenvolvimento.
 
 ## Como rodar
 
@@ -29,6 +29,8 @@ make infra          # Postgres e Redis via docker compose
 make migrar         # aplica db/migrations
 make semear         # cliente-0001@pix … cliente-0100@pix com R$ 10.000 cada
 make api            # API em :8080 (PORTA muda)
+make relay          # outbox → Redis Stream
+make worker         # liquida (WORKERS=8 consumidores por processo)
 make teste          # unidade + integração (Testcontainers sobe contêineres próprios)
 make teste-unidade  # só o que roda sem Docker (-short)
 make lint           # gofmt, go vet, golangci-lint
@@ -61,8 +63,43 @@ o seu contêiner e cada teste recebe um banco novo e migrado
 | 7 | Contas travadas em ordem crescente de id | Evita *deadlock* entre transferências cruzadas |
 | 8 | Erros HTTP em *problem details* (RFC 9457) | Cliente distingue casos por `type` estável |
 | 9 | Conta técnica invisível para a API | Ela pode ficar negativa; debitá-la criaria dinheiro |
+| 10 | Confirmar = `XACK` + `XDEL`; sem `MAXLEN` | `MAXLEN` pode apagar mensagem não confirmada |
+| 11 | Retentativa com espera base·2^(n-1), máx. 6 entregas, depois mortas | Não martelar o banco caído; não tentar para sempre |
+| 12 | Varredura de órfãs no relay (30 s, até 5×) | Redis pode perder dados; o banco não deixa pedido sumir |
+
+## Parâmetros de produção (cmd/relay, cmd/worker)
+
+| Parâmetro | Valor | Onde |
+|---|---|---|
+| Lote do relay | 200 (`RELAY_LOTE`) | `cmd/relay` |
+| Espera com outbox vazia | 10 ms | `cmd/relay` |
+| Idade de órfã / máx. republicações | 30 s / 5 | `cmd/relay` |
+| Consumidores por processo | 8 (`WORKERS`) | `cmd/worker` |
+| Espera base / máx. entregas | 5 s / 6 (≈2,5 min até morrer) | `cmd/worker` |
+
+Os testes usam tempos menores (espera base 200 ms, órfã 1 s).
 
 ## Histórico
+
+### 2026-10-21 — fila resiliente
+- `internal/queue`: Streams, grupo `liquidadores`, chaves
+  `transferencias`, `transferencias:mortas`, `transferencias:erros` (último
+  erro por mensagem).
+- Relay e worker como laços em `internal/usecase`; comandos em `cmd/relay` e
+  `cmd/worker`. Erro de Redis/Postgres não derruba nenhum dos dois: esperam
+  (até 5 s) e tentam de novo.
+- Worker liquida com contexto próprio (10 s), desligado do SIGTERM: o
+  encerramento não desfaz uma liquidação no meio.
+- Testes com Redis real: fluxo completo (300 transferências, 3 workers),
+  mensagem repetida 4×, worker que morre sem confirmar, falha persistente →
+  mortas (com checagem de que houve espera), Redis fora do ar, stream apagado.
+- Mutação: com a varredura de órfãs desligada, o teste do stream apagado
+  fica com 1 pendente para sempre.
+- Ponta a ponta manual com os binários: aceita → liquidada em ~9 ms.
+- Observação: entre 20:57 e o commit da API, `internal/domain` recebeu de fora
+  uma correção de estouro em `Centavos.String` (`math.MinInt64`) e fuzz tests;
+  entraram no commit da API. O gosec acusou as conversões int64→uint64; foram
+  anotadas, sem mudar o comportamento.
 
 ### 2026-10-21 — API de ingestão
 - `POST /transferencias`: chaves PIX → ids, validação, transferência + outbox

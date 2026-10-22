@@ -11,8 +11,10 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 
 	"github.com/araujovito/liquidacao-pix/db"
 	"github.com/araujovito/liquidacao-pix/internal/repository"
@@ -76,4 +78,38 @@ func Postgres(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	return pool
+}
+
+var (
+	redisUma sync.Once
+	redisURL string
+	redisErr error
+)
+
+// Redis devolve um cliente para o Redis do pacote e um prefixo de chaves
+// exclusivo do teste (testes no mesmo Redis não enxergam os streams uns dos
+// outros).
+func Redis(t *testing.T) (*redis.Client, string) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("teste de integração (precisa de Docker); rodando com -short")
+	}
+	ctx := context.Background()
+	redisUma.Do(func() {
+		var c *tcredis.RedisContainer
+		c, redisErr = tcredis.Run(ctx, "redis:7-alpine")
+		if redisErr == nil {
+			redisURL, redisErr = c.ConnectionString(ctx)
+		}
+	})
+	if redisErr != nil {
+		t.Fatalf("subir redis: %v", redisErr)
+	}
+	opt, err := redis.ParseURL(redisURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rdb := redis.NewClient(opt)
+	t.Cleanup(func() { _ = rdb.Close() })
+	return rdb, fmt.Sprintf("teste%d:", contadorDB.Add(1))
 }

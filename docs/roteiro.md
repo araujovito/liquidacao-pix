@@ -23,10 +23,11 @@ O estado de cada item fica marcado aqui e resumido na `MEMORIA_TECNICA.md`.
 - [x] `GET /saude` e encerramento gracioso
 
 ## Fase 3 — Fila resiliente
-- [ ] Relay da outbox para Redis Stream (`SKIP LOCKED`)
-- [ ] Worker com grupo de consumo, `XACK`, `XAUTOCLAIM`
-- [ ] Novas tentativas com espera crescente e stream de mensagens mortas
-- [ ] Teste: mensagem entregue duas vezes é liquidada uma vez
+- [x] Relay da outbox para Redis Stream (`SKIP LOCKED`)
+- [x] Worker com grupo de consumo, `XACK`, `XCLAIM` (ver ADR 0003)
+- [x] Novas tentativas com espera crescente e stream de mensagens mortas
+- [x] Teste: mensagem entregue duas vezes é liquidada uma vez
+- [x] Varredura de órfãs: mensagem perdida no Redis é republicada
 
 ## Fase 4 — Caos
 - [ ] Script que derruba Redis, worker e Postgres durante a carga

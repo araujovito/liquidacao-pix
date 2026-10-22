@@ -61,7 +61,7 @@ cliente ──HTTP──▶ API (Go) ──uma transação──▶ Postgres
 ### Fila (Redis Streams)
 - Redis **Streams** com grupo de consumidores, não Pub/Sub: a mensagem fica
   guardada até o worker confirmar (`XACK`); se o worker morrer, outro reivindica
-  a mensagem pendente (`XAUTOCLAIM`).
+  a mensagem pendente (`XCLAIM`; ver ADR 0003 sobre por que não `XAUTOCLAIM`).
 - Novas tentativas com espera crescente; depois de N falhas a mensagem vai para
   um stream de mensagens mortas (*dead letter*), com o erro anotado.
 
