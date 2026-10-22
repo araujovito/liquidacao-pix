@@ -25,9 +25,16 @@ e2e() { printf 'E99999999%s%03d%08d' "$STAMP" "$RUN" "$1"; }   # 1 + 8 + 12 + 11
 CAB="$(mktemp)"                    # cabeçalhos da última resposta
 LOG="$(mktemp)"                    # saída do último comando de infraestrutura
 WORKER_PARADO=false
+ADULTERADA=""                      # "conta_id seq valor_original" se a demo alterou uma entrada
 limpar() {
   local codigo=$?
   trap - EXIT
+  # A entrada adulterada na etapa 8 é só para a demonstração: se ela falhar no
+  # meio, devolve o valor original.
+  if [[ -n "$ADULTERADA" ]]; then
+    read -r conta seq valor <<<"$ADULTERADA"
+    psql "ALTER TABLE auditoria DISABLE TRIGGER USER; UPDATE auditoria SET valor_centavos = $valor WHERE conta_id = $conta AND seq = $seq; ALTER TABLE auditoria ENABLE TRIGGER USER;" >/dev/null 2>&1 || true
+  fi
   # Se a demonstração falhar entre stop e start, não deixa o sistema que já
   # existia num estado pior do que encontrou.
   if [[ "$WORKER_PARADO" == true ]]; then
@@ -127,5 +134,49 @@ else
   falha "a conciliação acusou divergência"
 fi
 
-printf '\n\033[1;32mDemonstração concluída: nada se perdeu, nada foi liquidado duas vezes, o dinheiro foi conservado.\033[0m\n'
+AUDITAR="$COMPOSE --profile ferramentas run --rm --no-deps -T auditar"
+TITULAR="$COMPOSE --profile ferramentas run --rm --no-deps -T titular"
+
+passo "8. Auditoria: cada decisão é assinada numa cadeia de HMAC; a chave não está no banco"
+if ! saida="$($AUDITAR 2>&1)"; then
+  echo "$saida" >&2
+  falha "a cadeia não verifica. Se o banco é anterior à fase 7 (decisões sem trilha), recrie os volumes: make infra-parar && docker volume rm liquidacao-pix_postgres"
+fi
+ok "$(grep -o 'íntegra:.*' <<<"$saida")"
+conta="$(psql "SELECT id FROM contas WHERE chave_pix = 'cliente-0001@pix'")"
+valor="$(psql "SELECT valor_centavos FROM auditoria WHERE conta_id = $conta AND seq = 1")"
+[[ -n "$conta" && -n "$valor" ]] || falha "a conta cliente-0001@pix não tem entrada de auditoria"
+ADULTERADA="$conta 1 $valor"
+psql "ALTER TABLE auditoria DISABLE TRIGGER USER; UPDATE auditoria SET valor_centavos = valor_centavos + 1 WHERE conta_id = $conta AND seq = 1; ALTER TABLE auditoria ENABLE TRIGGER USER;" >/dev/null
+if saida="$($AUDITAR 2>&1)"; then
+  falha "alterei uma entrada com os gatilhos desligados e o verificador não percebeu"
+fi
+grep -q "conta $conta seq 1: mac:" <<<"$saida" || { echo "$saida" >&2; falha "o verificador não apontou a entrada alterada (conta $conta, seq 1)"; }
+ok "alterei uma entrada direto no banco, com os gatilhos desligados: o verificador apontou conta $conta, seq 1 (mac)"
+psql "ALTER TABLE auditoria DISABLE TRIGGER USER; UPDATE auditoria SET valor_centavos = $valor WHERE conta_id = $conta AND seq = 1; ALTER TABLE auditoria ENABLE TRIGGER USER;" >/dev/null
+ADULTERADA=""
+$AUDITAR >"$LOG" 2>&1 || { cat "$LOG" >&2; falha "a cadeia não voltou a verificar depois de restaurar a entrada"; }
+ok "valor restaurado; a cadeia volta a verificar"
+
+passo "9. CPF cifrado, e apagamento por descarte de chave (a auditoria não é tocada)"
+CHAVE="demo-$STAMP$RUN@pix"
+psql "INSERT INTO contas (chave_pix, titular) VALUES ('$CHAVE', 'Titular da demonstração')" >/dev/null
+echo "529.982.247-25" | $TITULAR cadastrar-cpf -chave "$CHAVE" >"$LOG" 2>&1 || { cat "$LOG" >&2; falha "não foi possível cadastrar o CPF"; }
+[[ "$(psql "SELECT count(*) FROM contas WHERE cpf_cifrado IS NOT NULL AND chave_pix = '$CHAVE' AND position('52998224725' in encode(cpf_cifrado, 'escape')) = 0")" == 1 ]] \
+  || falha "o CPF cifrado não está no banco, ou aparece em claro"
+mascarado="$($TITULAR mostrar-cpf -chave "$CHAVE" 2>&1)" || falha "não foi possível ler o CPF: $mascarado"
+grep -q '\*\*\*\.982\.247-\*\*' <<<"$mascarado" || falha "a leitura mascarada veio errada: $mascarado"
+ok "CPF cadastrado cifrado e lido pela chave da conta ($(tr -d '\r' <<<"$mascarado"))"
+$AUDITAR >"$LOG" 2>&1 || { cat "$LOG" >&2; falha "a cadeia deixou de verificar"; }
+antes="$(psql "SELECT md5(string_agg(a::text, '|' ORDER BY a.conta_id, a.seq)) FROM auditoria a")"
+$TITULAR apagar-cpf -chave "$CHAVE" >"$LOG" 2>&1 || { cat "$LOG" >&2; falha "não foi possível apagar o CPF"; }
+if $TITULAR mostrar-cpf -chave "$CHAVE" >"$LOG" 2>&1; then falha "o CPF ainda é legível depois do apagamento"; fi
+grep -q "apagado" "$LOG" || { cat "$LOG" >&2; falha "esperava a mensagem de CPF apagado"; }
+[[ "$(psql "SELECT count(*) FROM chaves_cpf WHERE conta_id = (SELECT id FROM contas WHERE chave_pix = '$CHAVE')")" == 0 ]] || falha "a chave de dados ainda existe"
+[[ "$(psql "SELECT count(*) FROM contas WHERE chave_pix = '$CHAVE' AND cpf_cifrado IS NOT NULL")" == 1 ]] || falha "o texto cifrado deveria continuar no banco"
+[[ "$(psql "SELECT md5(string_agg(a::text, '|' ORDER BY a.conta_id, a.seq)) FROM auditoria a")" == "$antes" ]] || falha "o apagamento alterou a auditoria"
+$AUDITAR >"$LOG" 2>&1 || { cat "$LOG" >&2; falha "a cadeia deixou de verificar depois do apagamento"; }
+ok "chave descartada: o CPF não pode mais ser lido; a trilha financeira continua idêntica e verificável"
+
+printf '\n\033[1;32mDemonstração concluída: nada se perdeu, nada foi liquidado duas vezes, o dinheiro foi conservado, a trilha é verificável.\033[0m\n'
 printf 'Para ver métricas e traces: make observabilidade   (Grafana :3001, Jaeger :16686)\n'
