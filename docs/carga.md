@@ -204,3 +204,28 @@ das rodadas**; a causa das pausas não foi encontrada. Uma medição melhor
 exigiria isolar a máquina e usar banco novo a cada rodada, o que o
 `rodar.sh` ainda não faz.
 
+## Índice das pendentes (migração 0006)
+
+As métricas de operação precisam contar as transferências `PENDENTE` e achar a
+mais antiga a cada coleta (5 s). Sem índice, isso varre a tabela inteira. A
+migração 0006 cria um índice parcial (`criada_em` onde `status = 'PENDENTE'`).
+
+Custo esperado: como `status` entra no predicado, a atualização de status na
+finalização deixa de ser HOT (heap-only tuple), então cada liquidação escreve
+mais uma entrada de índice. Para medir, 4 rodadas de 1.000 pedidos/s por 1 min
+(32 consumidores, Prometheus e conciliador ligados), em banco novo, primeiro
+sem o índice e depois com ele:
+
+| Rodada | Índice | Erros / descartes | API p50 | p95 | p99 | Relatório |
+|---|---|---|---|---|---|---|
+| 1 | não | 0 / 0 | 3,1 ms | 6,1 ms | 11,1 ms | `…-2259` |
+| 2 | não | 0 / 0 | 3,1 ms | 7,8 ms | 13,9 ms | `…-2301` |
+| 3 | sim | 0 / 0 | 3,1 ms | 7,9 ms | 13,7 ms | `…-2303` |
+| 4 | sim | 0 / 0 | 3,2 ms | 8,1 ms | 13,6 ms | `…-2305` |
+
+**Sem custo mensurável a 1.000/s.** As diferenças (até ~2 ms no p95, ~1 ms no
+p99) são do tamanho da variação entre as duas rodadas sem índice. Os números
+são conservadores para o índice: as rodadas com índice rodaram num banco maior
+(de 120 mil para 256 mil transferências no fim). Não foi medido acima de
+1.000/s, onde a cauda intermitente já impede comparações limpas.
+
