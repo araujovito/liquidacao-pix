@@ -124,6 +124,30 @@ func TestMetricasDaAPIConservamPrimeiroStatusEscrito(t *testing.T) {
 	}
 }
 
+func TestMetricasDaAPITratamCorpoComoStatus200(t *testing.T) {
+	reg := metricas.NovoRegistro()
+	a := metricas.NovaAPI(reg)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /corpo-antes-status", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("resposta"))
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	rec := httptest.NewRecorder()
+	a.Middleware(mux).ServeHTTP(rec, httptest.NewRequest("GET", "/corpo-antes-status", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status enviado = %d, esperava %d", rec.Code, http.StatusOK)
+	}
+	got := series(t, reg, "pix_api_requisicao_duracao_segundos")
+	if got["codigo=200,rota=GET /corpo-antes-status"] != 1 {
+		t.Fatalf("métrica não tratou a escrita do corpo como status 200: %v", got)
+	}
+	if got["codigo=500,rota=GET /corpo-antes-status"] != 0 {
+		t.Fatalf("métrica registrou status posterior ao corpo: %v", got)
+	}
+}
+
 // Métricas ausentes (receptor nulo) não podem derrubar o servidor: é como
 // todos os testes e o código sem métricas rodam.
 func TestMetricasNulasSaoInofensivas(t *testing.T) {

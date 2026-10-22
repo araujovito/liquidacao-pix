@@ -62,6 +62,13 @@ func (g *gravadorDeStatus) WriteHeader(c int) {
 	g.ResponseWriter.WriteHeader(c)
 }
 
+func (g *gravadorDeStatus) Write(p []byte) (int, error) {
+	if !g.escreveu {
+		g.WriteHeader(http.StatusOK)
+	}
+	return g.ResponseWriter.Write(p)
+}
+
 // Middleware mede cada requisição. O rótulo "rota" é o padrão do roteador
 // ("POST /transferencias", "GET /transferencias/{id}"), nunca o caminho
 // literal: com o caminho, cada id de transferência criaria uma série nova.
