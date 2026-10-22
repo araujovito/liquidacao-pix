@@ -53,3 +53,7 @@ jobs:
         run: docker build -f deployments/Dockerfile -t liquidacao-pix:ci .
       - name: validar Compose
         run: docker compose -f deployments/docker-compose.yml --profile sistema config --quiet
+      - name: testar regras de alerta
+        run: make testar-alertas
+      - name: testar diagnóstico da demonstração
+        run: make testar-demo
