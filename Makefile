@@ -19,8 +19,9 @@ lint-openapi: ## valida o contrato docs/openapi.yaml com o redocly (versão fixa
 demo: ## demonstração de ponta a ponta em contêineres: transfere, derruba o worker, recupera e concilia
 	COMPOSE="$(COMPOSE) --profile sistema" tests/demo/demo.sh
 
-testar-demo: ## testa falhas da demonstração sem precisar de Docker
+testar-demo: ## testa falhas e recuperação da demonstração sem precisar de Docker
 	tests/demo/demo_test.sh
+	tests/demo/demo_recuperacao_test.sh
 
 testar-alertas: ## testa as regras de alerta com séries sintéticas (promtool, sem subir o sistema)
 	docker run --rm --entrypoint promtool -v "$(CURDIR)/deployments/observabilidade:/regras:ro" -w /regras prom/prometheus:v3.5.0 test rules alertas_test.yml

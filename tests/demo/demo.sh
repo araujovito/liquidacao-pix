@@ -42,7 +42,9 @@ pedir() { # pedir <n> <de> <para> <valor> -> imprime o corpo; os cabeçalhos fic
   curl -s -D "$CAB" -X POST "$API/transferencias" -H 'Content-Type: application/json' \
     -d "{\"end_to_end_id\":\"$(e2e "$1")\",\"chave_pagador\":\"cliente-$(printf '%04d' "$2")@pix\",\"chave_recebedor\":\"cliente-$(printf '%04d' "$3")@pix\",\"valor_centavos\":$4}"
 }
-campo() { grep -o "\"$1\":\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
+# O || true importa: com set -e e pipefail, um grep sem resultado derrubaria o
+# script em silêncio, sem nenhuma mensagem. Quem chama confere se veio vazio.
+campo() { { grep -o "\"$1\":\"[^\"]*\"" || true; } | head -1 | cut -d'"' -f4; }
 codigo() { head -1 "$1" | cut -d' ' -f2; }
 
 status_de() { curl -s "$API/transferencias/$1" | campo status; }
@@ -74,6 +76,7 @@ passo "3. Uma transferência: a API responde 202 na hora e o worker liquida depo
 corpo="$(pedir 1 1 2 2500)"
 [[ "$(codigo "$CAB")" == 202 ]] || falha "esperava 202, veio $(codigo "$CAB")"
 id1="$(echo "$corpo" | campo id)"
+[[ -n "$id1" ]] || falha "a resposta do 202 não trouxe um id: $corpo"
 ok "202 Accepted; status imediato: $(echo "$corpo" | campo status)"
 esperar_liquidada "$id1"
 ok "status depois de alguns ms: LIQUIDADA"
@@ -97,7 +100,9 @@ ids=()
 for n in $(seq 11 25); do
   corpo="$(pedir "$n" $(( (n % 9) + 1 )) $(( (n % 9) + 2 )) 100)"
   [[ "$(codigo "$CAB")" == 202 ]] || falha "a API deixou de aceitar com o worker parado"
-  ids+=("$(echo "$corpo" | campo id)")
+  id="$(echo "$corpo" | campo id)"
+  [[ -n "$id" ]] || falha "a resposta do 202 não trouxe um id: $corpo"
+  ids+=("$id")
 done
 sleep 2
 pendentes="$(psql "SELECT count(*) FROM transferencias WHERE status = 'PENDENTE'")"
