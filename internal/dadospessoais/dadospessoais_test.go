@@ -184,3 +184,27 @@ func TestMestrasDoAmbiente(t *testing.T) {
 		t.Fatalf("erro = %v: deveria falhar sem repetir a chave", err)
 	}
 }
+
+// Defesa em profundidade: mesmo que a chave de dados seja re-embrulhada para
+// outra conta (um erro numa futura rotação de mestra, por exemplo), o CPF
+// copiado continua sem decifrar, porque a conta também está no AAD dele.
+func TestCPFCopiadoNaoDecifraMesmoComAChaveReembrulhada(t *testing.T) {
+	m := mestras(t)
+	s, _ := m.Cifrar(7, "52998224725")
+	mestra := m.chaves["m1"]
+	dek, err := abrir(mestra, aadChave(7, "m1"), append(bytes.Clone(s.NonceEmbrulho), s.ChaveEmbrulhada...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reembrulhada, err := m.selar(mestra, aadChave(8, "m1"), dek)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copia := Sigilo{
+		CPFCifrado: s.CPFCifrado, MestraID: "m1",
+		NonceEmbrulho: reembrulhada[:nonceTam], ChaveEmbrulhada: reembrulhada[nonceTam:],
+	}
+	if _, err := m.Decifrar(8, copia); !errors.Is(err, ErrDecifragem) {
+		t.Fatalf("erro = %v, esperado ErrDecifragem", err)
+	}
+}
