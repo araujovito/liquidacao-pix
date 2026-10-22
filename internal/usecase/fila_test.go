@@ -304,7 +304,7 @@ func TestMensagemEsperandoNaFilaNaoERepublicada(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	parar := rodar(t, p.relay().Rodar) // só o relay: ninguém consome
+	parar := rodar(t, p.relay().Rodar)  // só o relay: ninguém consome
 	time.Sleep(2500 * time.Millisecond) // > 2× IdadeOrfa do teste
 	parar()
 
