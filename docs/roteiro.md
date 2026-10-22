@@ -39,16 +39,31 @@ e entram nas fases abaixo conforme o assunto.
 ## Fase 5 — Carga
 - [x] Scripts k6 (pico e carga sustentada)
 - [x] Números e máquina no README
+- [x] Rodada limpa: **1.000 pedidos/s sustentados** comprovados (0 erro, 0 descarte); acima de ~1.250/s há pausas de causa desconhecida (ver `docs/carga.md`)
 
 ## Fase 6 — Observabilidade
 - [x] Métricas Prometheus, painel Grafana provisionado e alertas baseados em idade (`make testar-alertas`)
-- [x] Rastreamento OpenTelemetry API → stream → worker
+- [x] Rastreamento OpenTelemetry API → outbox → relay → stream → worker, com Jaeger (ADR 0004)
+- [x] Testes de alertas (`make testar-alertas`) rodando no CI, incluindo o ponto cego de alvo parado
 
 ## Fase 7 — Auditoria e dados pessoais
 - [ ] Auditoria em cadeia de hashes (HMAC) + verificador
 - [ ] CPF cifrado com chave por titular + *crypto-shredding*
 
 ## Fase 8 — Apresentação
-- [x] README final (resumo em inglês, diagrama, como rodar, números)
-- [x] ADRs (0001 a 0004)
-- [x] `make demo` e contrato OpenAPI (`docs/openapi.yaml`)
+- [x] README final (resumo em inglês, diagrama, como rodar, números, o que **não** garante)
+- [x] ADRs 0001 a 0005 (o 0005 trata a falta de autenticação como decisão de escopo)
+- [x] `make demo` (7 passos, com queda e recuperação do worker) e seu teste sem Docker (`make testar-demo`, no CI)
+- [x] Contrato OpenAPI (`docs/openapi.yaml`) com **teste de contrato** nos dois sentidos e `make lint-openapi`
+- [x] Licença Apache-2.0 (`LICENSE`, `NOTICE`)
+
+## Em aberto
+
+| Item | Situação |
+|---|---|
+| Fase 7 (auditoria em cadeia de HMAC e proteção de dados pessoais) | Não começou. Risco crítico: implementação, revisão e auditoria final por modelo separado |
+| Causa das pausas da API acima de ~1.250 pedidos/s | Hipóteses `autoanalyze` e checkpoints testadas e descartadas; exige máquina isolada e banco novo a cada rodada |
+| Alertas sem notificação | Falta um Alertmanager; os alertas só aparecem na interface do Prometheus |
+| Autenticação e autorização | Fora do escopo por decisão (ADR 0005); qualquer chamador debita qualquer conta |
+| `CREATE INDEX` bloqueante nas migrações | Aceitável aqui; em tabela grande exigiria fora do migrador |
+| Rastreamento: span do relay cobre o lote inteiro | Um *link* entre spans pode servir melhor (ADR 0004) |
