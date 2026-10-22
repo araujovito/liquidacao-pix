@@ -1,0 +1,225 @@
+openapi: 3.1.0
+info:
+  title: Motor de liquidação de transferências instantâneas
+  version: 1.0.0
+  description: |
+    API de ingestão. `POST /transferencias` valida, grava a transferência e a
+    linha da outbox **na mesma transação** e só então responde `202`. A
+    liquidação acontece depois, de forma assíncrona; o resultado se consulta em
+    `GET /transferencias/{id}`.
+
+    **Idempotência.** O `end_to_end_id` é a chave. Reenviar o mesmo pedido
+    devolve a mesma transferência (cabeçalho `Idempotent-Replayed: true`);
+    reenviar a mesma chave com conteúdo diferente devolve `409`. Um cliente
+    deve reenviar o **mesmo** corpo em erro de rede ou `5xx`: é seguro.
+
+    Erros seguem o formato *problem details* (RFC 9457) com `type` estável:
+    o cliente decide pelo `type`, nunca pelo texto de `detail`.
+
+    **Sem autenticação, de propósito.** É um simulador para estudo de
+    consistência, idempotência e resiliência. Um sistema real exigiria
+    autenticação forte e autorização por participante (mTLS e OAuth 2.0, por
+    exemplo), e a chave de idempotência valeria por cliente.
+security: []
+servers:
+  - url: http://localhost:8080
+    description: Compose local (make sistema)
+paths:
+  /transferencias:
+    post:
+      summary: Aceita um pedido de transferência
+      operationId: criarTransferencia
+      description: |
+        Responde `202` depois do commit da transferência e da outbox. O corpo
+        é limitado a 4 KiB, deve conter exatamente um objeto JSON e não aceita
+        campos desconhecidos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Pedido' }
+            example:
+              end_to_end_id: E1234567820261021200000000000001
+              chave_pagador: cliente-0001@pix
+              chave_recebedor: cliente-0002@pix
+              valor_centavos: 2500
+      responses:
+        '202':
+          description: Pedido aceito (novo ou repetido). A liquidação ainda não aconteceu.
+          headers:
+            Location:
+              description: Onde consultar o resultado.
+              schema: { type: string, example: /transferencias/98170ccf-5454-4f5d-aba8-71816f316f6f }
+            Idempotent-Replayed:
+              description: Presente (`true`) quando o pedido já tinha sido aceito antes e nada novo foi gravado.
+              schema: { type: string, enum: ['true'] }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transferencia' }
+              example:
+                id: 98170ccf-5454-4f5d-aba8-71816f316f6f
+                end_to_end_id: E1234567820261021200000000000001
+                valor_centavos: 2500
+                status: PENDENTE
+                criada_em: '2026-10-21T20:57:28.872602-03:00'
+        '400': { $ref: '#/components/responses/JsonInvalido' }
+        '409': { $ref: '#/components/responses/Conflito' }
+        '413': { $ref: '#/components/responses/CorpoGrande' }
+        '415': { $ref: '#/components/responses/TipoDeConteudo' }
+        '422': { $ref: '#/components/responses/PedidoInvalido' }
+        '500': { $ref: '#/components/responses/ErroInterno' }
+  /transferencias/{id}:
+    get:
+      summary: Consulta o status de uma transferência
+      operationId: consultarTransferencia
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID devolvido pelo `POST`. Um valor que não é UUID é tratado como inexistente.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: A transferência. `PENDENTE` até o worker liquidá-la.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transferencia' }
+              example:
+                id: 98170ccf-5454-4f5d-aba8-71816f316f6f
+                end_to_end_id: E1234567820261021200000000000001
+                valor_centavos: 2500
+                status: LIQUIDADA
+                criada_em: '2026-10-21T20:57:28.872602-03:00'
+                finalizada_em: '2026-10-21T20:57:28.881910-03:00'
+        '404': { $ref: '#/components/responses/NaoEncontrada' }
+        '500': { $ref: '#/components/responses/ErroInterno' }
+  /saude:
+    get:
+      summary: Saúde da API (responde se o Postgres responde em até 2 s)
+      operationId: saude
+      responses:
+        '200':
+          description: Banco respondendo.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, enum: [ok] } }
+        '503': { $ref: '#/components/responses/BancoIndisponivel' }
+components:
+  schemas:
+    Pedido:
+      type: object
+      additionalProperties: false
+      required: [end_to_end_id, chave_pagador, chave_recebedor, valor_centavos]
+      properties:
+        end_to_end_id:
+          type: string
+          pattern: '^E[0-9]{8}[0-9]{12}[A-Za-z0-9]{11}$'
+          description: |
+            Identificador de ponta a ponta do PIX (32 caracteres): `E` + ISPB (8
+            dígitos) + data e hora `AAAAMMDDHHMM` + 11 alfanuméricos. É a chave
+            de idempotência.
+        chave_pagador:
+          type: string
+          description: Chave PIX da conta que paga. A conta técnica de liquidez não é aceita.
+        chave_recebedor:
+          type: string
+          description: Chave PIX da conta que recebe. Deve ser diferente do pagador.
+        valor_centavos:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 100000000
+          description: Valor em centavos (inteiro; nunca ponto flutuante). Máximo R$ 1.000.000,00.
+    Transferencia:
+      type: object
+      required: [id, end_to_end_id, valor_centavos, status, criada_em]
+      properties:
+        id: { type: string, format: uuid }
+        end_to_end_id: { type: string }
+        valor_centavos: { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [PENDENTE, LIQUIDADA, REJEITADA]
+          description: '`PENDENTE` é o único estado que muda; os outros dois são finais.'
+        motivo_rejeicao:
+          type: string
+          description: Presente só quando `REJEITADA`. Hoje o único motivo é `SALDO_INSUFICIENTE`.
+          example: SALDO_INSUFICIENTE
+        criada_em: { type: string, format: date-time }
+        finalizada_em:
+          type: string
+          format: date-time
+          description: Presente só quando o status é final.
+    Problema:
+      type: object
+      description: Problem details (RFC 9457).
+      required: [type, title, status, detail]
+      properties:
+        type:
+          type: string
+          description: Identificador estável do erro; decida por ele.
+          example: urn:liquidacao-pix:erro:end-to-end-em-conflito
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string, description: Texto para humanos; pode mudar. }
+  responses:
+    JsonInvalido:
+      description: JSON malformado, campo desconhecido ou conteúdo depois do primeiro objeto.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example: { type: 'urn:liquidacao-pix:erro:json-invalido', title: Bad Request, status: 400, detail: o corpo deve conter exatamente um objeto JSON }
+    Conflito:
+      description: O `end_to_end_id` já foi usado com conteúdo diferente (pagador, recebedor ou valor).
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example: { type: 'urn:liquidacao-pix:erro:end-to-end-em-conflito', title: Conflict, status: 409, detail: end_to_end_id já usado com outro conteúdo }
+    CorpoGrande:
+      description: O corpo passa de 4 KiB.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example: { type: 'urn:liquidacao-pix:erro:corpo-grande-demais', title: Request Entity Too Large, status: 413, detail: o corpo passa de 4 KiB }
+    TipoDeConteudo:
+      description: '`Content-Type` diferente de `application/json` (parâmetros como `charset=utf-8` são aceitos).'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example: { type: 'urn:liquidacao-pix:erro:tipo-de-conteudo-invalido', title: Unsupported Media Type, status: 415, detail: 'use Content-Type: application/json' }
+    PedidoInvalido:
+      description: |
+        Pedido bem formado mas recusado: chave PIX desconhecida
+        (`chave-desconhecida`) ou regra de domínio violada (`pedido-invalido`:
+        `end_to_end_id` fora do formato, valor fora de 1..100000000, pagador
+        igual ao recebedor). Todos os erros de domínio vêm juntos num só `detail`.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          examples:
+            regraDeDominio:
+              summary: Regra de domínio violada
+              value: { type: 'urn:liquidacao-pix:erro:pedido-invalido', title: Unprocessable Entity, status: 422, detail: 'valor deve ser positivo e no máximo R$ 1.000.000,00' }
+            chaveDesconhecida:
+              summary: Chave PIX que não pertence a nenhuma conta de cliente
+              value: { type: 'urn:liquidacao-pix:erro:chave-desconhecida', title: Unprocessable Entity, status: 422, detail: 'chave PIX desconhecida: "ninguem@pix"' }
+    NaoEncontrada:
+      description: Transferência inexistente (ou id que não é UUID).
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example: { type: 'urn:liquidacao-pix:erro:nao-encontrada', title: Not Found, status: 404, detail: transferência não encontrada }
+    ErroInterno:
+      description: Falha do serviço. Detalhe interno não vaza; está no log. É seguro reenviar o mesmo pedido.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example: { type: 'urn:liquidacao-pix:erro:erro-interno', title: Internal Server Error, status: 500, detail: erro interno }
+    BancoIndisponivel:
+      description: O Postgres não respondeu em 2 s.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example: { type: 'urn:liquidacao-pix:erro:banco-indisponivel', title: Service Unavailable, status: 503, detail: postgres não respondeu }
