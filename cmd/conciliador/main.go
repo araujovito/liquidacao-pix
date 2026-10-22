@@ -8,6 +8,8 @@
 package main
 
 import (
+	"flag"
+	"os"
 	"time"
 
 	"github.com/araujovito/liquidacao-pix/internal/metricas"
@@ -18,6 +20,9 @@ import (
 )
 
 func main() {
+	umaVez := flag.Bool("uma-vez", false, "concilia uma vez e sai (código 1 se houver divergência); não expõe métricas")
+	flag.Parse()
+
 	log := processo.Log()
 	ctx, parar := processo.ContextoComSinais()
 	defer parar()
@@ -27,6 +32,17 @@ func main() {
 		processo.Sair(log, "conciliador", err)
 	}
 	defer pool.Close()
+
+	if *umaVez {
+		n, err := (usecase.Conciliador{Repo: repository.New(pool), Log: log}).Uma(ctx)
+		if err != nil {
+			processo.Sair(log, "conciliador", err)
+		}
+		if n > 0 {
+			os.Exit(1)
+		}
+		return
+	}
 	rdb, err := processo.Redis(ctx)
 	if err != nil {
 		processo.Sair(log, "conciliador", err)

@@ -35,23 +35,30 @@ func (c Conciliador) Rodar(ctx context.Context) error {
 }
 
 func (c Conciliador) uma(ctx context.Context) {
+	if _, err := c.Uma(ctx); err != nil && ctx.Err() == nil {
+		c.Metricas.Falhou()
+		c.Log.WarnContext(ctx, "conciliação não conseguiu rodar", "erro", err)
+	}
+}
+
+// Uma roda a conciliação uma vez, registra o resultado (métricas e log) e
+// devolve quantas divergências encontrou. O erro é de execução (banco fora do
+// ar), não de divergência.
+func (c Conciliador) Uma(ctx context.Context) (int, error) {
 	inicio := time.Now()
 	divs, err := c.Repo.Conciliar(ctx)
 	if err != nil {
-		if ctx.Err() == nil {
-			c.Metricas.Falhou()
-			c.Log.WarnContext(ctx, "conciliação não conseguiu rodar", "erro", err)
-		}
-		return
+		return 0, err
 	}
 	c.Metricas.Concluida(len(divs), time.Since(inicio))
 	if len(divs) == 0 {
 		c.Log.InfoContext(ctx, "conciliação fechada", "duracao", time.Since(inicio).Round(time.Millisecond))
-		return
+		return 0, nil
 	}
 	// Os detalhes têm ids internos de conta e de transferência, nunca dados
 	// pessoais; podem ir para o log.
 	for _, d := range divs {
 		c.Log.ErrorContext(ctx, "conciliação divergente", "tipo", d.Tipo, "detalhe", d.Detalhe)
 	}
+	return len(divs), nil
 }
