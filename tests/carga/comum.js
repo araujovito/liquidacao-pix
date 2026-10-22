@@ -8,6 +8,7 @@
 import http from 'k6/http';
 import exec from 'k6/execution';
 import { check } from 'k6';
+import { Counter } from 'k6/metrics';
 
 const API = __ENV.API || 'http://localhost:8080';
 const CONTAS = parseInt(__ENV.CONTAS || '1000', 10);
@@ -18,6 +19,8 @@ if (!/^\d{12}$/.test(__ENV.CARIMBO || '') || !/^[0-9a-z]{2}$/.test(__ENV.RODADA 
 }
 
 const parametros = { headers: { 'Content-Type': 'application/json' }, timeout: '10s' };
+const errosHTTP = new Counter('erros_http');
+const errosTransporte = new Counter('erros_transporte');
 
 function chave(n) {
   return `cliente-${String(n).padStart(4, '0')}@pix`;
@@ -35,6 +38,12 @@ export function transferir() {
     chave_recebedor: chave(para),
     valor_centavos: 1 + Math.floor(Math.random() * 5000),
   }), parametros);
+
+  if (res.status >= 400) {
+    errosHTTP.add(1, { status: String(res.status) });
+  } else if (res.status === 0) {
+    errosTransporte.add(1, { codigo: String(res.error_code || 0) });
+  }
 
   check(res, { 'status 202': (r) => r.status === 202 });
 }

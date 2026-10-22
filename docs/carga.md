@@ -32,6 +32,11 @@ fila desta rodada esvaziar, roda a conciliação e escreve o relatório.
   usuários virtuais estavam ocupados esperando resposta. Diferente de zero
   significa que a taxa planejada **não** foi atingida, e a latência real
   percebida seria pior que a medida.
+- Na carga sustentada, qualquer erro ou descarte reprova a rodada. O relatório
+  ainda é escrito para diagnóstico, mas o comando termina com código diferente
+  de zero. No pico, saturação e descartes são parte do objeto da medição.
+- Uma divergência de conciliação também reprova a execução. A mensagem fica no
+  relatório para investigação.
 - O k6 não reenvia pedidos com erro; um cliente real reenviaria (o teste de
   caos cobre esse comportamento).
 
@@ -130,3 +135,21 @@ Revisar especialmente:
     ou tempo esgotado?);
   - se 32 consumidores é um bom padrão fora desta máquina.
 ```
+
+## Revisão adversarial
+
+A revisão do ciclo 1 encontrou três riscos no executor, corrigidos depois das
+primeiras medições:
+
+- o teste podia começar mesmo com backlog antigo após esgotar a espera de dois
+  minutos; agora cancela a rodada;
+- a conciliação usava `|| true`, registrava a divergência no relatório, mas
+  ainda terminava com sucesso; agora uma divergência reprova a execução;
+- erros de HTTP e falhas de transporte apareciam apenas como total agregado;
+  novas rodadas também registram as duas categorias separadamente.
+
+A carga sustentada passou a exigir zero erro, zero descarte e 100% de respostas
+202. Portanto, o resultado de três minutos com 1.877 descartes continua útil
+para diagnóstico, mas não deve ser descrito como capacidade sustentada
+comprovada. É necessária uma nova rodada limpa para definir a maior taxa que
+atende esses critérios.

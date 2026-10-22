@@ -36,13 +36,29 @@ for _ in $(seq 120); do
   [[ "$(sql "SELECT count(*) FROM transferencias WHERE status = 'PENDENTE'")" == 0 ]] && break
   sleep 1
 done
+pendentes_anteriores="$(sql "SELECT count(*) FROM transferencias WHERE status = 'PENDENTE'")"
+if (( pendentes_anteriores != 0 )); then
+  echo "há $pendentes_anteriores transferências pendentes de rodadas anteriores; medição cancelada" >&2
+  exit 1
+fi
 
 echo "» rodando k6 ($cenario, rodada $rodada)"
+# Impede que uma falha ao iniciar o k6 reutilize silenciosamente o resumo da
+# rodada anterior.
+rm -f "$saida/ultimo.json"
+set +e
 docker run --rm --network host --user "$(id -u)" \
   -v "$PWD/tests/carga:/scripts:ro" -v "$PWD/$saida:/resultados" \
   -e API="http://127.0.0.1:8080" -e CARIMBO="$carimbo" -e RODADA="$rodada" -e CONTAS="$CONTAS" \
   -e PICO="${PICO:-}" -e TAXA="${TAXA:-}" -e DURACAO="${DURACAO:-}" \
   "$K6_IMAGEM" run --quiet "/scripts/$cenario.js"
+k6_rc=$?
+set -e
+if [[ ! -s "$saida/ultimo.json" ]]; then
+  echo "k6 não produziu resumo; execução abortada (código $k6_rc)" >&2
+  (( k6_rc == 0 )) && k6_rc=1
+  exit "$k6_rc"
+fi
 
 fila_no_fim="$(sql "SELECT count(*) FROM transferencias WHERE end_to_end_id LIKE '$padrao' AND status = 'PENDENTE'")"
 echo "» carga encerrada; $fila_no_fim pendentes da medição. Esperando a fila esvaziar."
@@ -82,7 +98,10 @@ vazao() {
 read -r aceite_med aceite_max <<<"$(vazao criada_em)"
 read -r liq_med liq_max <<<"$(vazao finalizada_em)"
 
-divergencias="$(go run ./tests/carga/conciliar 2>&1 || true)"
+set +e
+divergencias="$(go run ./tests/carga/conciliar 2>&1)"
+conciliacao_rc=$?
+set -e
 
 # --- números do k6 -----------------------------------------------------------
 k6="$saida/ultimo.json"
@@ -98,6 +117,8 @@ pedidos=$(m '.metrics["http_reqs{scenario:medicao}"].values.count')
 falhas_n=$(m '.metrics["http_req_failed{scenario:medicao}"].values.passes')
 falhas="$falhas_n ($(m '.metrics["http_req_failed{scenario:medicao}"].values.rate * 100 | . * 1000 | round / 1000') %)"
 descartados=$(m '.metrics.dropped_iterations.values.count // 0')
+erros_http=$(m '.metrics.erros_http.values.count // 0')
+erros_transporte=$(m '.metrics.erros_transporte.values.count // 0')
 
 # --- relatório ----------------------------------------------------------------
 cpu="$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"
@@ -115,9 +136,9 @@ cat >"$relatorio" <<MD
 
 ## API (k6)
 
-| Pedidos | Erros | Descartados pelo k6 | p50 | p95 | p99 | máx. |
-|---|---|---|---|---|---|---|
-| $pedidos | $falhas | $descartados | $api_p50 ms | $api_p95 ms | $api_p99 ms | $api_max ms |
+| Pedidos | Erros | HTTP ≥ 400 | Transporte/timeout | Descartados pelo k6 | p50 | p95 | p99 | máx. |
+|---|---|---|---|---|---|---|---|---|
+| $pedidos | $falhas | $erros_http | $erros_transporte | $descartados | $api_p50 ms | $api_p95 ms | $api_p99 ms | $api_max ms |
 
 "Descartados" são pedidos que o k6 deixou de enviar por falta de usuários
 virtuais livres: se for diferente de zero, a taxa planejada não foi atingida.
@@ -142,3 +163,12 @@ MD
 
 echo "» relatório em $relatorio"
 cat "$relatorio"
+
+if (( conciliacao_rc != 0 )); then
+  echo "conciliação falhou; rodada inválida" >&2
+  exit "$conciliacao_rc"
+fi
+if (( k6_rc != 0 )); then
+  echo "um ou mais critérios do k6 falharam; relatório preservado em $relatorio" >&2
+  exit "$k6_rc"
+fi

@@ -15,7 +15,16 @@ export const options = {
       duration: __ENV.DURACAO || '3m', preAllocatedVUs: 300, maxVUs: 2000,
     },
   },
-  thresholds: limites,
+  thresholds: {
+    ...limites,
+    // Carga sustentada só é válida se a taxa planejada realmente chegou ao
+    // sistema e todos os pedidos foram aceitos. O script ainda gera o
+    // relatório quando algum limite falha, mas termina com código diferente
+    // de zero para a rodada não ser confundida com capacidade comprovada.
+    'http_req_failed{scenario:medicao}': ['rate==0'],
+    'checks{scenario:medicao}': ['rate==1'],
+    dropped_iterations: ['count==0'],
+  },
   summaryTrendStats: estatisticas,
 };
 
