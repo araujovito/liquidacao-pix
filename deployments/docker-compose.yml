@@ -27,6 +27,47 @@ services:
       interval: 2s
       retries: 30
 
+  # Os programas. `make sistema` sobe tudo; `make infra` só o banco e o Redis
+  # (para rodar os programas fora do Docker durante o desenvolvimento).
+  migrar:
+    build: { context: .., dockerfile: deployments/Dockerfile }
+    image: liquidacao-pix:dev
+    command: ["/app/migrar"]
+    environment: &ambiente
+      DATABASE_URL: postgres://pix:pix@postgres:5432/pix?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: { condition: service_healthy }
+    profiles: [sistema]
+
+  api:
+    image: liquidacao-pix:dev
+    command: ["/app/api"]
+    environment: *ambiente
+    ports: ["8080:8080"]
+    restart: unless-stopped
+    depends_on:
+      migrar: { condition: service_completed_successfully }
+    profiles: [sistema]
+
+  relay:
+    image: liquidacao-pix:dev
+    command: ["/app/relay"]
+    environment: *ambiente
+    restart: unless-stopped
+    depends_on:
+      migrar: { condition: service_completed_successfully }
+    profiles: [sistema]
+
+  worker:
+    image: liquidacao-pix:dev
+    command: ["/app/worker"]
+    environment: *ambiente
+    restart: unless-stopped
+    depends_on:
+      migrar: { condition: service_completed_successfully }
+    profiles: [sistema]
+
 volumes:
   postgres:
   redis:
