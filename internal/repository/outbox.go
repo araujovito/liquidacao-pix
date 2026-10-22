@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -21,7 +23,7 @@ import (
 // publicar devolve o id da mensagem criada para cada transferência; ele fica
 // gravado na outbox para a varredura de órfãs.
 func (r *Repositorio) PublicarPendentes(ctx context.Context, limite int, publicar func(ctx context.Context, ids []string) ([]string, error)) (int, error) {
-	var n int
+	var publicadas int
 	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT id, transferencia_id::text FROM outbox
@@ -59,14 +61,24 @@ func (r *Repositorio) PublicarPendentes(ctx context.Context, limite int, publica
 		if len(mensagens) != len(ids) {
 			return fmt.Errorf("publicar outbox: %d transferências, %d mensagens", len(ids), len(mensagens))
 		}
+		// Um id vazio tem a contagem certa mas não identifica mensagem: a
+		// varredura de órfãs o trata como "sumiu do Redis" e republicaria.
+		if slices.Contains(mensagens, "") {
+			return errors.New("publicar outbox: id de mensagem vazio")
+		}
 		_, err = tx.Exec(ctx, `
 			UPDATE outbox o SET publicada_em = now(), mensagem_id = p.mensagem_id
 			  FROM unnest($1::bigint[], $2::text[]) AS p (id, mensagem_id)
 			 WHERE o.id = p.id`, linhas, mensagens)
-		n = len(ids)
+		publicadas = len(ids)
 		return err
 	})
-	return n, err
+	// Só informa publicações depois do commit: se o UPDATE ou o COMMIT
+	// falharem, o rollback desfaz tudo e o chamador não pode ler n > 0.
+	if err != nil {
+		return 0, err
+	}
+	return publicadas, nil
 }
 
 // Orfa é uma linha da outbox cuja transferência segue PENDENTE muito depois
