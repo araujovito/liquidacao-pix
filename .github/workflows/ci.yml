@@ -32,3 +32,24 @@ jobs:
       # Redis reais, os mesmos dos testes locais.
       - name: testes (unidade + integração, com detector de corrida)
         run: go test -race -count=1 ./...
+
+  seguranca-e-artefatos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: instalar govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+      - name: vulnerabilidades alcançáveis
+        run: govulncheck ./...
+      - name: fuzz — decisão conserva dinheiro
+        run: go test ./internal/domain -run='^$' -fuzz=FuzzDecidirConservaDinheiro -fuzztime=10s
+      - name: fuzz — limites de valores
+        run: go test ./internal/domain -run='^$' -fuzz=FuzzValidarNuncaAceitaValorForaDoLimite -fuzztime=10s
+      - name: construir imagem dos executáveis
+        run: docker build -f deployments/Dockerfile -t liquidacao-pix:ci .
+      - name: validar Compose
+        run: docker compose -f deployments/docker-compose.yml --profile sistema config --quiet

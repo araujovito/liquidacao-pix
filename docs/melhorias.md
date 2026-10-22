@@ -94,7 +94,7 @@ fases do [roteiro](roteiro.md).
 - [ ] Implementar auditoria encadeada com HMAC-SHA256.
 - [ ] Criar verificador capaz de apontar a primeira quebra da cadeia.
 - [ ] Não registrar chaves PIX, CPF, credenciais ou corpos completos em logs.
-- [ ] Executar `govulncheck` na integração contínua.
+- [x] Executar `govulncheck` na integração contínua.
 - [ ] Revisar permissões do usuário do Postgres para que a proteção do
   livro-razão não dependa apenas de convenção no código.
 
@@ -126,9 +126,11 @@ fases do [roteiro](roteiro.md).
 
 - [x] Executar `gofmt`, `go vet`, lint e testes com detector de corrida.
 - [ ] Publicar cobertura sem transformar percentual em objetivo isolado.
-- [ ] Executar fuzzing por tempo limitado na CI.
-- [ ] Construir todos os binários e imagens Docker na CI.
-- [ ] Validar o `docker-compose` e as migrações na pipeline.
+- [x] Executar fuzzing por tempo limitado na CI.
+- [x] Construir todos os binários e imagens Docker na CI.
+- [x] Validar o `docker-compose` na pipeline.
+- [ ] Validar as migrações explicitamente na pipeline, além da cobertura dos
+  testes de integração.
 - [ ] Fixar versões das ferramentas utilizadas pela CI.
 - [ ] Revisar dependências com `go mod tidy` antes de cada entrega.
 
