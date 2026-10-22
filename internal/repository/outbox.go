@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -50,6 +51,13 @@ func (r *Repositorio) PublicarPendentes(ctx context.Context, limite int, publica
 		mensagens, err := publicar(ctx, ids)
 		if err != nil {
 			return err
+		}
+		// O unnest de vários arrays preenche o menor com NULL até o tamanho do
+		// maior. Sem esta validação, um publicador defeituoso poderia devolver
+		// menos ids, marcar linhas como publicadas sem mensagem_id e ainda fazer
+		// o método informar que publicou tudo.
+		if len(mensagens) != len(ids) {
+			return fmt.Errorf("publicar outbox: %d transferências, %d mensagens", len(ids), len(mensagens))
 		}
 		_, err = tx.Exec(ctx, `
 			UPDATE outbox o SET publicada_em = now(), mensagem_id = p.mensagem_id
