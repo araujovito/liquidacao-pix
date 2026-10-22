@@ -33,21 +33,28 @@ func TestPublicacaoIncompletaNaoMarcaOutbox(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := repo.PublicarPendentes(ctx, 10, func(context.Context, []string) ([]string, error) {
-		return nil, nil // simula publicador que perdeu parte da resposta
-	})
-	if err == nil {
-		t.Fatal("publicação com quantidade errada foi aceita")
-	}
-	if n != 0 {
-		t.Fatalf("informou %d publicações apesar do rollback", n)
-	}
-	pendentes, err := repo.PendentesNaOutbox(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pendentes != 1 {
-		t.Fatalf("outbox ficou com %d pendentes, esperava 1", pendentes)
+	for nome, mensagens := range map[string][]string{
+		"menos mensagens": nil,
+		"mais mensagens":  {"m1", "m2"},
+	} {
+		t.Run(nome, func(t *testing.T) {
+			n, err := repo.PublicarPendentes(ctx, 10, func(context.Context, []string) ([]string, error) {
+				return mensagens, nil
+			})
+			if err == nil {
+				t.Fatal("publicação com quantidade errada foi aceita")
+			}
+			if n != 0 {
+				t.Fatalf("informou %d publicações apesar do rollback", n)
+			}
+			pendentes, err := repo.PendentesNaOutbox(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pendentes != 1 {
+				t.Fatalf("outbox ficou com %d pendentes, esperava 1", pendentes)
+			}
+		})
 	}
 }
 
