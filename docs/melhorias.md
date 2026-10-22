@@ -18,9 +18,9 @@ fases do [roteiro](roteiro.md).
 - [x] Proteger a formatação de `Centavos` no limite mínimo de `int64`.
 - [ ] Garantir que cada lançamento pertença ao pagador ou recebedor da
   transferência correspondente.
-- [ ] Reforçar a relação entre `status`, `motivo_rejeicao` e `finalizada_em`
+- [x] Reforçar a relação entre `status`, `motivo_rejeicao` e `finalizada_em`
   com constraints no Postgres.
-- [ ] Verificar separadamente, na conciliação, o débito do pagador e o crédito
+- [x] Verificar separadamente, na conciliação, o débito do pagador e o crédito
   do recebedor, além da soma zero.
 - [ ] Definir e testar o comportamento de contas bloqueadas, encerradas ou
   inexistentes durante a liquidação.
@@ -50,11 +50,11 @@ fases do [roteiro](roteiro.md).
 - [x] Disponibilizar consulta de status por identificador.
 - [x] Diferenciar repetição idêntica de conflito de conteúdo.
 - [x] Limitar o tamanho do corpo e rejeitar campos JSON desconhecidos.
-- [ ] Rejeitar conteúdo adicional depois do primeiro objeto JSON.
-- [ ] Validar o `Content-Type` das requisições.
+- [x] Rejeitar conteúdo adicional depois do primeiro objeto JSON.
+- [x] Validar o `Content-Type` das requisições.
 - [ ] Adicionar um identificador de requisição aos logs e respostas.
 - [ ] Documentar o contrato da API com OpenAPI.
-- [ ] Testar dezenas de pedidos simultâneos com a mesma chave de idempotência,
+- [x] Testar dezenas de pedidos simultâneos com a mesma chave de idempotência,
   incluindo pedidos conflitantes. *(20 iguais simultâneos feito; faltam os
   conflitantes)*
 

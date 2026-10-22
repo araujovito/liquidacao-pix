@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"time"
 
@@ -64,16 +66,33 @@ func paraJSON(t domain.Transferencia) transferenciaJSON {
 // criar aceita o pedido e responde 202 Accepted. O 202 só sai depois do
 // commit da transferência e da outbox (ADR 0001).
 func (s *Servidor) criar(w http.ResponseWriter, r *http.Request) {
+	tipo, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || tipo != "application/json" {
+		problema(w, http.StatusUnsupportedMediaType, "tipo-de-conteudo-invalido", "use Content-Type: application/json")
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, tamanhoMaximoCorpo)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields() // campo com nome errado vira erro, não valor zero silencioso
 	var p pedidoJSON
-	if err := dec.Decode(&p); err != nil {
+	if err = dec.Decode(&p); err != nil {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			problema(w, http.StatusRequestEntityTooLarge, "corpo-grande-demais", "o corpo passa de 4 KiB")
 			return
 		}
 		problema(w, http.StatusBadRequest, "json-invalido", err.Error())
+		return
+	}
+	// Um pedido contém exatamente um valor JSON. Sem esta segunda leitura,
+	// `{"pedido": "válido"} {"conteúdo": "ignorado"}` seria aceito.
+	var extra any
+	if err = dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			problema(w, http.StatusRequestEntityTooLarge, "corpo-grande-demais", "o corpo passa de 4 KiB")
+			return
+		}
+		problema(w, http.StatusBadRequest, "json-invalido", "o corpo deve conter exatamente um objeto JSON")
 		return
 	}
 

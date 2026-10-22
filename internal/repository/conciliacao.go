@@ -53,7 +53,8 @@ func (r *Repositorio) Conciliar(ctx context.Context) ([]Divergencia, error) {
 				HAVING (t.status = 'LIQUIDADA' AND (
 				           count(l.id) <> 2
 				        OR coalesce(sum(l.valor_centavos), 0) <> 0
-				        OR count(*) FILTER (WHERE l.conta_id = t.pagador_id AND l.valor_centavos = -t.valor_centavos) <> 1))
+				        OR count(*) FILTER (WHERE l.conta_id = t.pagador_id AND l.valor_centavos = -t.valor_centavos) <> 1
+				        OR count(*) FILTER (WHERE l.conta_id = t.recebedor_id AND l.valor_centavos = t.valor_centavos) <> 1))
 				    OR (t.status <> 'LIQUIDADA' AND count(l.id) <> 0)`)
 			if err != nil {
 				return err

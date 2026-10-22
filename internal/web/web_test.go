@@ -64,6 +64,9 @@ func (a *ambiente) req(metodo, rota, corpo string) resposta {
 	if err != nil {
 		a.t.Fatal(err)
 	}
+	if corpo != "" {
+		r.Header.Set("Content-Type", "application/json")
+	}
 	res, err := http.DefaultClient.Do(r)
 	if err != nil {
 		a.t.Fatal(err)
@@ -156,6 +159,44 @@ func TestPedidosSimultaneosComMesmaChave(t *testing.T) {
 	}
 }
 
+// Pedidos concorrentes com a mesma chave, mas conteúdos diferentes, devem
+// eleger exatamente um conteúdo. Os demais recebem conflito e nenhum pedido
+// cria uma segunda transferência ou linha de outbox.
+func TestPedidosSimultaneosConflitantes(t *testing.T) {
+	a := novoAmbiente(t)
+	const clientes = 20
+	resultados := make(chan resposta, clientes)
+	inicio := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range clientes {
+		wg.Go(func() {
+			<-inicio
+			resultados <- a.req("POST", "/transferencias", pedido(e2e1, "ana@pix", "beto@pix", int64(700+i)))
+		})
+	}
+	close(inicio)
+	wg.Wait()
+	close(resultados)
+
+	aceitas, conflitos := 0, 0
+	for r := range resultados {
+		switch r.status {
+		case http.StatusAccepted:
+			aceitas++
+		case http.StatusConflict:
+			conflitos++
+		default:
+			t.Fatalf("status inesperado %d: %v", r.status, r.corpo)
+		}
+	}
+	if aceitas != 1 || conflitos != clientes-1 {
+		t.Fatalf("aceitas=%d conflitos=%d", aceitas, conflitos)
+	}
+	if n := a.linhasNaOutbox(); n != 1 {
+		t.Fatalf("%d linhas na outbox", n)
+	}
+}
+
 func TestErrosDeEntrada(t *testing.T) {
 	a := novoAmbiente(t)
 	casos := []struct {
@@ -165,6 +206,7 @@ func TestErrosDeEntrada(t *testing.T) {
 		tipo   string
 	}{
 		{"json quebrado", `{"end_to_end_id":`, 400, "json-invalido"},
+		{"dois objetos", pedido(e2e1, "ana@pix", "beto@pix", 10) + `{}`, 400, "json-invalido"},
 		{"campo desconhecido", `{"valor":10}`, 400, "json-invalido"},
 		{"corpo grande", `{"end_to_end_id":"` + strings.Repeat("x", 5000) + `"}`, 413, "corpo-grande-demais"},
 		{"chave inexistente", pedido(e2e1, "ana@pix", "ninguem@pix", 10), 422, "chave-desconhecida"},
@@ -188,6 +230,37 @@ func TestErrosDeEntrada(t *testing.T) {
 	}
 	if a.linhasNaOutbox() != 0 {
 		t.Fatal("pedido inválido chegou à outbox")
+	}
+}
+
+func TestContentTypeDoPedido(t *testing.T) {
+	a := novoAmbiente(t)
+	corpo := pedido(e2e1, "ana@pix", "beto@pix", 10)
+	for _, caso := range []struct {
+		nome, contentType string
+		status            int
+	}{
+		{"ausente", "", http.StatusUnsupportedMediaType},
+		{"texto", "text/plain", http.StatusUnsupportedMediaType},
+		{"json com charset", "application/json; charset=utf-8", http.StatusAccepted},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			r, err := http.NewRequest(http.MethodPost, a.srv.URL+"/transferencias", strings.NewReader(corpo))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if caso.contentType != "" {
+				r.Header.Set("Content-Type", caso.contentType)
+			}
+			res, err := http.DefaultClient.Do(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = res.Body.Close()
+			if res.StatusCode != caso.status {
+				t.Fatalf("status %d, esperava %d", res.StatusCode, caso.status)
+			}
+		})
 	}
 }
 
