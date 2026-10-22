@@ -11,9 +11,13 @@ tentado. É atualizado no mesmo commit da mudança que descreve.
 
 ## Estado atual
 
-Fases 0 a 4 concluídas: fluxo completo API → outbox → relay → Redis Stream →
-worker, resiliente a SIGKILL em cada serviço e à perda total do stream
-(teste de caos passando). Próximo passo: fase 5 (teste de carga com k6).
+Fases 0 a 6 e 8 concluídas: fluxo completo API → outbox → relay → Redis Stream →
+worker, resiliente a SIGKILL em cada serviço e à perda total do stream; teste de
+carga; métricas, painel, alertas e rastreamento; `make demo`, OpenAPI e README.
+Falta a fase 7: auditoria em cadeia de hashes (HMAC) e proteção de dados
+pessoais (CPF cifrado com apagamento por descarte de chave). Último teste de
+caos com o código atual: 55.938 pedidos aceitos, todos liquidados, 0 perdidos ou
+duplicados, conciliação fechada.
 
 ## Ambiente
 
@@ -31,7 +35,11 @@ make migrar         # aplica db/migrations
 make semear         # cliente-0001@pix … cliente-0100@pix com R$ 10.000 cada
 make api            # API em :8080 (PORTA muda)
 make relay          # outbox → Redis Stream
-make worker         # liquida (WORKERS=8 consumidores por processo)
+make worker         # liquida (WORKERS=32 consumidores por processo)
+make demo           # demonstração de ponta a ponta em contêineres (~40 s)
+make observabilidade   # sistema + Prometheus, Grafana, Jaeger e rastreamento ligado
+make testar-alertas    # regras de alerta com séries sintéticas (promtool)
+make carga-sustentada  # k6 (ver docs/carga.md)
 make sistema        # tudo em contêineres (imagem distroless, usuário não-root)
 make caos           # teste de caos contra o sistema em contêineres (~2 min)
 make teste          # unidade + integração (Testcontainers sobe contêineres próprios)
@@ -69,6 +77,10 @@ o seu contêiner e cada teste recebe um banco novo e migrado
 | 10 | Confirmar = `XACK` + `XDEL`; sem `MAXLEN` | `MAXLEN` pode apagar mensagem não confirmada |
 | 11 | Retentativa com espera base·2^(n-1), máx. 6 entregas, depois mortas | Não martelar o banco caído; não tentar para sempre |
 | 12 | Varredura de órfãs no relay (30 s, até 5×) | Redis pode perder dados; o banco não deixa pedido sumir |
+| 13 | Métricas de idade, não só de tamanho; fonte fora do ar não vira zero | 10 mil pendentes recentes podem ser normais, 10 de 5 minutos não |
+| 14 | Contexto do rastro viaja na outbox e no stream ([ADR 0004](docs/adr/0004-contexto-do-rastro-viaja-como-dado.md)) | Nenhuma chamada liga os elos do caminho |
+| 15 | Alerta de alvo fora do ar cobre `up == 0` **e** `absent(up)` | Contêiner parado some da descoberta por DNS; só o teste contra o Prometheus real mostrou |
+| 16 | Índice parcial das pendentes (migração 0006) | A coleta de estado não varre a tabela; sem custo mensurável a 1.000/s |
 
 ## Parâmetros de produção (cmd/relay, cmd/worker)
 
@@ -77,7 +89,7 @@ o seu contêiner e cada teste recebe um banco novo e migrado
 | Lote do relay | 200 (`RELAY_LOTE`) | `cmd/relay` |
 | Espera com outbox vazia | 10 ms | `cmd/relay` |
 | Idade de órfã / máx. republicações | 30 s / 5 | `cmd/relay` |
-| Consumidores por processo | 8 (`WORKERS`) | `cmd/worker` |
+| Consumidores por processo | 32 (`WORKERS`); com 8 o worker não acompanhava 1.500/s | `cmd/worker` |
 | Espera base / máx. entregas | 5 s / 6 (≈2,5 min até morrer) | `cmd/worker` |
 
 Os testes usam tempos menores (espera base 200 ms, órfã 1 s).
@@ -106,6 +118,34 @@ worker (~2.300/s em regime, menos durante as falhas), e a fila acumulou
 dezenas de milhares de mensagens. É o que o teste de carga vai medir.
 
 ## Histórico
+
+### 2026-10-22 — demonstração, contrato e apresentação
+- `make demo`: 7 passos, sai com código ≠ 0 se algo não se confirmar. Rodou do
+  zero e sobre banco já usado. Conciliador ganhou `-uma-vez` (roda sem Go).
+- `docs/openapi.yaml` validado com redocly; cruzado com os `type` de erro do
+  código, o que achou `chave-desconhecida` fora do contrato. O linter acusou a
+  falta de segurança declarada: a API é aberta de propósito, e o contrato diz.
+- README com resumo em inglês e uma seção do que o projeto **não** garante.
+  Números refeitos (caos rodado de novo) em vez de copiados.
+- Revisão cruzada da métrica HTTP achou duas falhas: respostas 1xx faziam o
+  cliente receber 200 no lugar do status final, e handler com pânico sumia das
+  métricas. Revisão dos alertas achou um ponto cego: com o conciliador caído as
+  regras de idade ficavam mudas, e `up == 0` nunca dispara para contêiner parado.
+
+### 2026-10-21/22 — carga, observabilidade e rastreamento
+- k6 (pico e sustentada): com 8 consumidores o worker era o gargalo; padrão
+  passou a 32. **Taxa sustentada comprovada: 1.000 pedidos/s** (limpa, 3 min);
+  acima de ~1.250/s há pausas de 1 a 14 s de causa desconhecida. Hipóteses
+  testadas e descartadas: `autoanalyze`; checkpoints sem relação clara.
+- Métricas Prometheus (cardinalidade controlada, sem dado sensível), painel
+  Grafana, seis alertas, conciliador periódico, índice parcial das pendentes
+  (sem custo mensurável).
+- Rastreamento OpenTelemetry: 1 trace, 3 serviços, 4 spans por pedido; sem custo
+  mensurável a 1.000/s com 100% de amostragem. Um teste meu exigia uma ordem
+  entre spans que o desenho não garante; passou localmente e falhou no CI.
+- CI: `govulncheck` antigo dava pânico com o Go 1.27 e escondia 3
+  vulnerabilidades reais (`x/crypto`, `moby/go-archive`); atualizadas, 0
+  alcançáveis.
 
 ### 2026-10-21 — teste de caos e duas falhas que ele encontrou
 - `tests/caos`: carga + SIGKILL em cada serviço + stream apagado; cliente

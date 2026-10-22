@@ -37,17 +37,18 @@ e entram nas fases abaixo conforme o assunto.
 - [x] `docs/runbook.md`
 
 ## Fase 5 — Carga
-- [ ] Scripts k6 (pico e carga sustentada)
-- [ ] Números e máquina no README
+- [x] Scripts k6 (pico e carga sustentada)
+- [x] Números e máquina no README
 
 ## Fase 6 — Observabilidade
-- [ ] Métricas Prometheus e painel Grafana provisionado
-- [ ] Rastreamento OpenTelemetry API → stream → worker
+- [x] Métricas Prometheus, painel Grafana provisionado e alertas baseados em idade (`make testar-alertas`)
+- [x] Rastreamento OpenTelemetry API → stream → worker
 
 ## Fase 7 — Auditoria e dados pessoais
 - [ ] Auditoria em cadeia de hashes (HMAC) + verificador
 - [ ] CPF cifrado com chave por titular + *crypto-shredding*
 
 ## Fase 8 — Apresentação
-- [ ] README final (resumo em inglês, diagrama, como rodar, números)
-- [ ] ADRs revisados
+- [x] README final (resumo em inglês, diagrama, como rodar, números)
+- [x] ADRs (0001 a 0004)
+- [x] `make demo` e contrato OpenAPI (`docs/openapi.yaml`)
