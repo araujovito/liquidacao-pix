@@ -22,7 +22,21 @@ psql()  { $COMPOSE exec -T postgres psql -U pix -d pix -XAtq -c "$1"; }
 
 e2e() { printf 'E99999999%s%03d%08d' "$STAMP" "$RUN" "$1"; }   # 1 + 8 + 12 + 11 = 32
 
-CAB="$(mktemp)"; trap 'rm -f "$CAB" "$CAB.1"' EXIT   # cabeçalhos da última resposta
+CAB="$(mktemp)"                    # cabeçalhos da última resposta
+LOG="$(mktemp)"                    # saída do último comando de infraestrutura
+WORKER_PARADO=false
+limpar() {
+  local codigo=$?
+  trap - EXIT
+  # Se a demonstração falhar entre stop e start, não deixa o sistema que já
+  # existia num estado pior do que encontrou.
+  if [[ "$WORKER_PARADO" == true ]]; then
+    $COMPOSE start worker >/dev/null 2>&1 || true
+  fi
+  rm -f "$CAB" "$CAB.1" "$LOG"
+  exit "$codigo"
+}
+trap limpar EXIT
 
 pedir() { # pedir <n> <de> <para> <valor> -> imprime o corpo; os cabeçalhos ficam em $CAB
   curl -s -D "$CAB" -X POST "$API/transferencias" -H 'Content-Type: application/json' \
@@ -41,13 +55,19 @@ esperar_liquidada() { # esperar_liquidada <id> [segundos]
 }
 
 passo "1. Subindo o sistema (Postgres, Redis, migrações, API, relay, worker, conciliador)"
-$COMPOSE up -d --build --wait >/dev/null 2>&1
+if ! $COMPOSE up -d --build --wait >"$LOG" 2>&1; then
+  cat "$LOG" >&2
+  falha "não foi possível subir o sistema"
+fi
 ok "sistema no ar"
 for _ in $(seq 30); do curl -sf "$API/saude" >/dev/null && break; sleep 1; done
 curl -sf "$API/saude" >/dev/null || falha "a API não respondeu em $API/saude"
 
 passo "2. Semeando 10 contas com R\$ 10.000,00 cada (o dinheiro entra pela conta técnica de liquidez, como lançamento)"
-$COMPOSE run --rm --no-deps --entrypoint /app/semear migrar -contas 10 -saldo 1000000 >/dev/null 2>&1
+if ! $COMPOSE run --rm --no-deps --entrypoint /app/semear migrar -contas 10 -saldo 1000000 >"$LOG" 2>&1; then
+  cat "$LOG" >&2
+  falha "não foi possível semear as contas"
+fi
 ok "cliente-0001@pix … cliente-0010@pix criadas"
 
 passo "3. Uma transferência: a API responde 202 na hora e o worker liquida depois"
@@ -68,7 +88,11 @@ pedir 1 1 2 9999 >/dev/null
 ok "mesma chave com valor diferente: 409 Conflict"
 
 passo "5. Falha controlada: derrubo o worker e continuo recebendo pedidos"
-$COMPOSE stop worker >/dev/null 2>&1
+if ! $COMPOSE stop worker >"$LOG" 2>&1; then
+  cat "$LOG" >&2
+  falha "não foi possível parar o worker"
+fi
+WORKER_PARADO=true
 ids=()
 for n in $(seq 11 25); do
   corpo="$(pedir "$n" $(( (n % 9) + 1 )) $(( (n % 9) + 2 )) 100)"
@@ -82,7 +106,11 @@ fila="$($COMPOSE exec -T redis redis-cli XLEN transferencias | tr -d '\r')"
 ok "a API segue aceitando (202): $pendentes transferências PENDENTE, $fila mensagens esperando no stream"
 
 passo "6. Recuperação: religo o worker; ele consome o que ficou esperando"
-$COMPOSE start worker >/dev/null 2>&1
+if ! $COMPOSE start worker >"$LOG" 2>&1; then
+  cat "$LOG" >&2
+  falha "não foi possível religar o worker"
+fi
+WORKER_PARADO=false
 for id in "${ids[@]}"; do esperar_liquidada "$id" 60; done
 ok "as ${#ids[@]} transferências aceitas durante a queda foram todas liquidadas"
 [[ "$(psql "SELECT count(*) FROM transferencias WHERE status = 'PENDENTE'")" == 0 ]] || falha "ainda há pendentes"
