@@ -119,6 +119,23 @@ dezenas de milhares de mensagens. É o que o teste de carga vai medir.
 
 ## Histórico
 
+### 2026-10-22 — o contrato deixa de poder divergir da API
+- `TestAPIRespeitaOContratoOpenAPI` (kin-openapi): requisições reais, Postgres
+  real, cada resposta validada contra `docs/openapi.yaml` nos dois sentidos. Para
+  provocar 500 e 503 de verdade, um segundo servidor usa um banco já fechado.
+  Três mutações confirmam: renomear um campo da API, tirar o 413 do contrato e
+  documentar um 429 que a API nunca devolve reprovam o teste, cada uma pelo
+  motivo certo.
+- O linter só vê o arquivo: `.redocly.yaml` desliga duas regras, cada uma com o
+  motivo escrito; `make lint-openapi` (versão fixa) termina com código 0. O
+  Redocly procura `redocly.yaml`, não `.redocly.yaml`; sem `--config` explícito
+  a configuração era ignorada em silêncio.
+- A idempotência, que o OpenAPI não modela, aparece como dois exemplos de 202
+  (novo e repetido) e como ponteiro para os testes que a provam.
+- ADR 0005: autenticação fora do escopo, de propósito, com o que um sistema real
+  exigiria. A lacuna mais séria hoje é que qualquer chamador pode debitar
+  qualquer conta.
+
 ### 2026-10-22 — demonstração, contrato e apresentação
 - `make demo`: 7 passos, sai com código ≠ 0 se algo não se confirmar. Rodou do
   zero e sobre banco já usado. Conciliador ganhou `-uma-vez` (roda sem Go).

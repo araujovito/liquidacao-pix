@@ -89,6 +89,7 @@ lançamentos é sempre zero.
 | Idempotência na API | `end_to_end_id` único decidido pelo banco, não por consulta prévia. 20 pedidos iguais simultâneos geram 1 transferência |
 | A fila se recupera de falhas | Streams com `XCLAIM`, espera crescente, mensagens mortas e varredura de órfãs. Perda total do Redis converge (17.956 recuperadas pela varredura na última rodada de caos) |
 | Dado sensível fora de métricas e traces | Rótulos de baixa cardinalidade; teste percorre todos os atributos de todos os spans e falha se achar chave PIX ou `end_to_end_id` |
+| O contrato OpenAPI não diverge da API | [Teste de contrato](internal/web/contrato_test.go): requisições reais contra Postgres real, cada resposta validada contra `docs/openapi.yaml` **nos dois sentidos** (nada devolvido fora do contrato, nada documentado sem ser exercido). Conferido por mutação |
 | Os alertas disparam quando devem | `make testar-alertas` (séries sintéticas) **e** prova contra o Prometheus real, derrubando Redis e relay |
 
 Vários testes foram validados por **mutação** (estrago o código de propósito e
@@ -127,8 +128,9 @@ Honestidade sobre os limites faz parte do projeto:
 
 - **Não é PIX de verdade.** Sem SPI, DICT, ISPB reais nem liquidação
   interbancária; só o formato do `end_to_end_id` e a ideia.
-- **Sem autenticação** na API (declarado em [`docs/openapi.yaml`](docs/openapi.yaml)).
-  Um sistema real exigiria mTLS/OAuth e idempotência por cliente.
+- **Sem autenticação nem autorização** na API: qualquer chamador pode debitar
+  qualquer conta. É decisão de escopo, declarada no contrato e explicada, com o que
+  um sistema real exigiria, no [ADR 0005](docs/adr/0005-autenticacao-fora-do-escopo.md).
 - **Um único Postgres**, sem réplica nem *failover*. A resiliência demonstrada
   é a dos componentes ao redor do banco e a de reinícios do próprio banco.
 - **Sem Alertmanager:** os alertas aparecem na interface do Prometheus, mas
@@ -163,7 +165,7 @@ docs/           ADRs, runbook, OpenAPI, observabilidade, carga, especificação
 |---|---|
 | [`docs/adr/`](docs/adr) | Decisões de arquitetura e o que foi descartado |
 | [`docs/runbook.md`](docs/runbook.md) | O que fazer quando a fila cresce, há mensagens mortas, a conciliação diverge |
-| [`docs/openapi.yaml`](docs/openapi.yaml) | Contrato da API |
+| [`docs/openapi.yaml`](docs/openapi.yaml) | Contrato da API, testado contra a implementação (`make lint-openapi` valida o documento) |
 | [`docs/observabilidade.md`](docs/observabilidade.md) | Métricas, alertas, painel, rastreamento |
 | [`docs/carga.md`](docs/carga.md) | Testes de carga: método, resultados, limites |
 | [`MEMORIA_TECNICA.md`](MEMORIA_TECNICA.md) | Estado, decisões em vigor e histórico, incluindo hipóteses refutadas |
@@ -180,6 +182,7 @@ make lint            # gofmt, go vet, golangci-lint
 make caos            # teste de caos contra o sistema em contêineres (~2 min)
 make carga-sustentada   # k6
 make testar-alertas  # regras de alerta com promtool
+make lint-openapi    # valida o contrato da API com o redocly
 ```
 
 ## Licença
