@@ -71,6 +71,16 @@ services:
       migrar: { condition: service_completed_successfully }
     profiles: [ferramentas]
 
+  # Verifica a cadeia de auditoria: `docker compose run --rm auditar`.
+  auditar:
+    image: liquidacao-pix:dev
+    entrypoint: ["/app/auditar"]
+    environment:
+      <<: [*ambiente, *auditoria]
+    depends_on:
+      migrar: { condition: service_completed_successfully }
+    profiles: [ferramentas]
+
   api:
     image: liquidacao-pix:dev
     command: ["/app/api"]

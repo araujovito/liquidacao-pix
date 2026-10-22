@@ -115,15 +115,20 @@ func Redis(t *testing.T) (*redis.Client, string) {
 	return rdb, fmt.Sprintf("teste%d:", contadorDB.Add(1))
 }
 
-// Chaveiro devolve um chaveiro de auditoria só para testes (a chave é fixa e
-// pública, e por isso nunca deve aparecer fora daqui).
-func Chaveiro(t *testing.T) *auditoria.Chaveiro {
-	t.Helper()
+// ChaveDeAuditoria é a chave de auditoria dos testes: fixa e pública, e por
+// isso nunca deve aparecer fora daqui.
+func ChaveDeAuditoria() []byte {
 	chave := make([]byte, auditoria.TamanhoChave)
 	for i := range chave {
 		chave[i] = byte(0xA0 + i%16)
 	}
-	c, err := auditoria.NovoChaveiro("teste", map[string][]byte{"teste": chave})
+	return chave
+}
+
+// Chaveiro devolve um chaveiro de auditoria só para testes, com a chave "teste".
+func Chaveiro(t *testing.T) *auditoria.Chaveiro {
+	t.Helper()
+	c, err := auditoria.NovoChaveiro("teste", map[string][]byte{"teste": ChaveDeAuditoria()})
 	if err != nil {
 		t.Fatal(err)
 	}

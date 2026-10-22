@@ -9,7 +9,7 @@ export REDIS_URL ?= redis://localhost:6379/0
 export AUDITORIA_CHAVES ?= dev1:a0a1a2a3a4a5a6a7a8a9aaabacadaeafa0a1a2a3a4a5a6a7a8a9aaabacadaeaf
 export AUDITORIA_CHAVE_ATUAL ?= dev1
 
-.PHONY: lint-openapi demo testar-demo testar-alertas observabilidade caos carga-pico carga-sustentada infra sistema infra-parar migrar semear api relay worker teste teste-unidade lint fmt
+.PHONY: lint-openapi demo testar-demo testar-alertas observabilidade caos carga-pico carga-sustentada auditar infra sistema infra-parar migrar semear api relay worker teste teste-unidade lint fmt
 
 infra: ## sobe Postgres e Redis e espera ficarem saudáveis
 	$(COMPOSE) up -d --wait postgres redis
@@ -35,6 +35,9 @@ observabilidade: ## sistema + Prometheus (:9090), Grafana (:3001) e Jaeger (:166
 
 infra-parar:
 	$(COMPOSE) --profile sistema --profile observabilidade down
+
+auditar: ## verifica a cadeia de HMAC da auditoria (ADR 0006); sai com 1 se achar adulteração
+	go run ./cmd/auditar
 
 migrar: infra
 	go run ./cmd/migrar
