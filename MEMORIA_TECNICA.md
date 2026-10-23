@@ -177,7 +177,7 @@ dezenas de milhares de mensagens. É o que o teste de carga vai medir.
   (API p50 2,9 → 3,1 ms), cauda pior (p99 8,1 → 27,4 ms, 163 descartes), e as duas
   rodadas reprovam o critério da carga sustentada. Uma rodada por versão: não dá
   para dizer quanto da cauda é da cadeia. Está em `docs/carga.md`.
-- **Revisão do Codex (6802573, cf80702, f6c89b8, 6f030df):** MAC com mais de 32
+- **Revisão cruzada (6802573, cf80702, f6c89b8, 6f030df):** MAC com mais de 32
   bytes era truncado ao ser copiado para o array e podia continuar válido; uma
   decisão ligada a conta apagada sumia da verificação; chave de CPF ausente sem
   marcador fingia apagamento; arquivo de âncoras podia ficar parcial com saída 0;
