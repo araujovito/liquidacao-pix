@@ -270,6 +270,34 @@ func TestCabecaQueNaoApontaParaAUltimaEntradaEAcusada(t *testing.T) {
 	esperarSo(t, c.verificar(ch), auditoria.ProblemaCabeca)
 }
 
+func TestMACComBytesExtrasNaoPassaPelaLeitura(t *testing.T) {
+	c, _, beto, _ := cadeiaDeTres(t)
+	c.adulterar(`ALTER TABLE auditoria DROP CONSTRAINT auditoria_mac_check`)
+	c.adulterar(`UPDATE auditoria SET mac = mac || decode('ff', 'hex')
+	             WHERE conta_id = $1 AND seq = 2`, beto)
+	err := c.repo.LerAuditoria(c.ctx, func(auditoria.ContaLida) error { return nil })
+	if err == nil {
+		t.Fatal("um MAC com bytes extras ficou invisível na conversão para array")
+	}
+}
+
+func TestContaApagadaComDecisaoRestanteEAcusada(t *testing.T) {
+	c := novoCenario(t)
+	ana, beto := c.conta("ana", 0), c.conta("beto", 0)
+	final, err := c.liq.Liquidar(c.ctx, c.pedir(ana, beto, 100).ID)
+	if err != nil || final.Status != domain.Rejeitada {
+		t.Fatalf("pré-condição: %+v, %v", final, err)
+	}
+	c.adulterar(`DELETE FROM auditoria WHERE conta_id = $1`, ana)
+	c.adulterar(`ALTER TABLE transferencias DROP CONSTRAINT transferencias_pagador_id_fkey`)
+	c.adulterar(`DELETE FROM contas WHERE id = $1`, ana)
+
+	ps := c.verificar(c.liq.Auditoria)
+	if !slices.Contains(tipos(ps), auditoria.ProblemaSemEntrada) {
+		t.Fatalf("a decisão que referencia a conta apagada ficou invisível: %v", ps)
+	}
+}
+
 // O ponto do crypto-shredding: apagar o dado pessoal não toca o histórico
 // financeiro. A cadeia continua verificando, a conciliação continua fechando
 // e nem uma linha de auditoria ou de lançamento muda.

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -110,6 +111,10 @@ func (r *Repositorio) LerAuditoria(ctx context.Context, fn func(auditoria.ContaL
 		}
 		l.TransferenciaID = tid
 		l.Transferencia.Motivo = tMotivo
+		if len(anterior) != auditoria.TamanhoMAC || len(mac) != auditoria.TamanhoMAC {
+			return fmt.Errorf("auditoria: conta %d seq %d: MAC com tamanho inválido (%d/%d bytes)",
+				l.ContaID, l.Seq, len(anterior), len(mac))
+		}
 		copy(l.MACAnterior[:], anterior)
 		copy(l.MAC[:], mac)
 
@@ -135,7 +140,31 @@ func (r *Repositorio) LerAuditoria(ctx context.Context, fn func(auditoria.ContaL
 	if err := fechar(); err != nil {
 		return err
 	}
-	return avancar(1<<62 - 1)
+	if err := avancar(1<<62 - 1); err != nil {
+		return err
+	}
+
+	// Uma decisão também pode apontar para uma conta que foi apagada por quem
+	// controla o esquema e removeu as FKs. Ela não aparece em cabecas, mas não
+	// pode desaparecer da verificação: entrega uma conta sintética cuja decisão
+	// sem entrada será denunciada pelo verificador.
+	existentes := make(map[int64]bool, len(cabecas))
+	for _, c := range cabecas {
+		existentes[c.ID] = true
+	}
+	var ausentes []int64
+	for id := range semEntrada {
+		if !existentes[id] {
+			ausentes = append(ausentes, id)
+		}
+	}
+	slices.Sort(ausentes)
+	for _, id := range ausentes {
+		if err := fn(auditoria.ContaLida{ID: id, SemEntrada: semEntrada[id]}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // decisoesSemEntrada acha, por conta, as transferências finais em que ela é
