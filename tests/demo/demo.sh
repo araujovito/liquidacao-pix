@@ -33,7 +33,10 @@ limpar() {
   # meio, devolve o valor original.
   if [[ -n "$ADULTERADA" ]]; then
     read -r conta seq valor <<<"$ADULTERADA"
-    psql "ALTER TABLE auditoria DISABLE TRIGGER USER; UPDATE auditoria SET valor_centavos = $valor WHERE conta_id = $conta AND seq = $seq; ALTER TABLE auditoria ENABLE TRIGGER USER;" >/dev/null 2>&1 || true
+    if ! psql "ALTER TABLE auditoria DISABLE TRIGGER USER; UPDATE auditoria SET valor_centavos = $valor WHERE conta_id = $conta AND seq = $seq; ALTER TABLE auditoria ENABLE TRIGGER USER;" >/dev/null; then
+      printf '  \033[31m✗ não foi possível restaurar a entrada adulterada (conta %s, seq %s)\033[0m\n' "$conta" "$seq" >&2
+      codigo=1
+    fi
   fi
   # Se a demonstração falhar entre stop e start, não deixa o sistema que já
   # existia num estado pior do que encontrou.
