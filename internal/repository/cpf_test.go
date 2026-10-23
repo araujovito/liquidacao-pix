@@ -188,6 +188,24 @@ func TestCPFMestraErradaOuAusenteNaoDecifra(t *testing.T) {
 	}
 }
 
+func TestChaveAusenteSemMarcadorNaoFingeApagamento(t *testing.T) {
+	pool := testinfra.Postgres(t)
+	repo, ctx, m := repository.New(pool), context.Background(), mestrasDeTeste(t, "m1", 1)
+	if _, err := repo.CriarConta(ctx, "ana@teste", "Ana"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CadastrarCPF(ctx, m, "ana@teste", cpfDeTeste); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM chaves_cpf WHERE conta_id =
+		(SELECT id FROM contas WHERE chave_pix = 'ana@teste')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CPFDaConta(ctx, m, "ana@teste"); !errors.Is(err, repository.ErrCPFInconsistente) {
+		t.Fatalf("erro = %v, esperado ErrCPFInconsistente", err)
+	}
+}
+
 // Quem copia o CPF cifrado de uma conta para outra, dentro do banco, não o lê.
 func TestCPFCopiadoParaOutraContaNaoDecifra(t *testing.T) {
 	pool := testinfra.Postgres(t)

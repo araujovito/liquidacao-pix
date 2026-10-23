@@ -11,10 +11,11 @@ import (
 )
 
 var (
-	ErrSemCPF          = errors.New("conta sem CPF cadastrado")
-	ErrCPFApagado      = errors.New("CPF apagado (chave descartada)")
-	ErrCPFJaCadastrado = errors.New("conta já tem CPF (cadastrado ou apagado)")
-	ErrContaSemTitular = errors.New("conta técnica não tem titular")
+	ErrSemCPF           = errors.New("conta sem CPF cadastrado")
+	ErrCPFApagado       = errors.New("CPF apagado (chave descartada)")
+	ErrCPFJaCadastrado  = errors.New("conta já tem CPF (cadastrado ou apagado)")
+	ErrContaSemTitular  = errors.New("conta técnica não tem titular")
+	ErrCPFInconsistente = errors.New("CPF cifrado sem chave e sem registro de apagamento")
 )
 
 // CadastrarCPF cifra o CPF com uma chave de dados nova e grava os dois, na
@@ -74,8 +75,10 @@ func (r *Repositorio) CPFDaConta(ctx context.Context, m *dadospessoais.Mestras, 
 		return "", ErrContaSemTitular
 	case cifrado == nil:
 		return "", ErrSemCPF
-	case apagado || mestraID == nil:
+	case apagado:
 		return "", ErrCPFApagado
+	case mestraID == nil:
+		return "", ErrCPFInconsistente
 	}
 	return m.Decifrar(id, dadospessoais.Sigilo{
 		CPFCifrado: cifrado, MestraID: *mestraID, NonceEmbrulho: nonce, ChaveEmbrulhada: chave})
