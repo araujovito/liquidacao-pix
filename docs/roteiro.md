@@ -62,7 +62,7 @@ e entram nas fases abaixo conforme o assunto.
 
 | Item | Situação |
 |---|---|
-| Revisão do Sol e auditoria final do Opus da fase 7 | `REVISAO_PENDENTE`: implementada e testada (inclusive por mutação), mas a matriz de risco exige revisão independente antes de chamá-la concluída |
+| Revisão independente e auditoria final da fase 7 | `REVISAO_PENDENTE`: implementada e testada (inclusive por mutação), mas o risco crítico exige revisão independente antes de chamá-la concluída |
 | Causa das pausas da API acima de ~1.250 pedidos/s | Hipóteses `autoanalyze` e checkpoints testadas e descartadas; exige máquina isolada e banco novo a cada rodada |
 | Alertmanager | Os alertas só aparecem na interface do Prometheus; nenhuma notificação sai |
 | Autenticação e autorização | Fora do escopo por decisão (ADR 0005); qualquer chamador debita qualquer conta |

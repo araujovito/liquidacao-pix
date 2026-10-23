@@ -16,8 +16,8 @@ worker, resiliente a SIGKILL em cada serviço e à perda total do stream; teste 
 carga; métricas, painel, alertas e rastreamento; `make demo`, OpenAPI e README;
 **auditoria em cadeia de HMAC por conta e CPF cifrado com apagamento por
 descarte de chave** (fase 7, [ADR 0006](docs/adr/0006-auditoria-em-cadeia-e-cpf-cifrado.md)).
-A fase 7 é de risco crítico e está com **`REVISAO_PENDENTE`**: o roteamento exige
-a revisão do Sol e a auditoria final do Opus, que não foram feitas. Último teste
+A fase 7 é de risco crítico e está com **`REVISAO_PENDENTE`**: a revisão
+independente e a auditoria final ainda não foram concluídas. Último teste
 de caos com o código atual, já com a trilha: 44.337 pedidos aceitos, todos
 liquidados, 0 perdidos ou duplicados, conciliação fechada e 88.874 entradas de
 auditoria em 101 contas, 0 problemas.
@@ -151,8 +151,8 @@ dezenas de milhares de mensagens. É o que o teste de carga vai medir.
 ## Histórico
 
 ### 2026-10-22 — fase 7: auditoria em cadeia e CPF cifrado
-- ADR 0006 escrito primeiro e revisado adversarialmente antes do código (o Codex
-  fechou a codificação canônica, a âncora por MAC e o AAD do embrulho). Código
+- ADR 0006 escrito primeiro e revisado adversarialmente antes do código; a
+  revisão fechou a codificação canônica, a âncora por MAC e o AAD do embrulho. Código
   em commits pequenos: pacote `auditoria` (formato, chaveiro, vetores fixos
   calculados em Python à parte), gravação na liquidação (migração 0008),
   `cmd/auditar`, pacote `dadospessoais`, migração 0009 e `cmd/titular`.

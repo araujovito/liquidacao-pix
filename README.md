@@ -155,8 +155,8 @@ Honestidade sobre os limites faz parte do projeto:
   nenhuma notificação sai.
 - **A fase 7 (auditoria e CPF cifrado) não passou por revisão independente.**
   Foi implementada e testada (inclusive por mutação), mas é código de risco
-  crítico e a revisão e a auditoria final que o [plano de colaboração](docs/colaboracao-claude-codex.md)
-  exige estão pendentes. Leia-a como candidata, não como auditada.
+  crítico e a revisão independente e a auditoria final ainda estão pendentes.
+  Leia-a como candidata, não como auditada.
 - **A cadeia de auditoria tem limites declarados** ([ADR 0006](docs/adr/0006-auditoria-em-cadeia-e-cpf-cifrado.md)):
   a chave do HMAC e a mestra do CPF vêm do ambiente (um sistema real as teria
   num KMS/HSM); quem tem a chave refaz a cadeia; apagar o rabo de uma
