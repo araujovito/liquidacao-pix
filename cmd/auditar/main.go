@@ -37,6 +37,15 @@ const maxLinhas = 50
 // outro lugar para avisar, e o código de saída é o que importa.
 func escrever(w io.Writer, f string, a ...any) { _, _ = fmt.Fprintf(w, f, a...) }
 
+func escreverAncoras(w io.Writer, linhas []string) error {
+	for _, l := range linhas {
+		if _, err := fmt.Fprintln(w, l); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func main() {
 	imprimirAncora := flag.Bool("ancora", false, "imprime a cabeça de cada cadeia (conta seq mac) se a verificação passar")
 	arquivoAncora := flag.String("conferir-ancora", "", "arquivo de âncoras de uma execução anterior")
@@ -120,8 +129,8 @@ func executar(out, errOut io.Writer, imprimirAncora bool, arquivoAncora string) 
 	}
 	escrever(errOut, "auditar: íntegra: %d contas, %d entradas\n", contas, entradas)
 	if imprimirAncora {
-		for _, l := range cabecas {
-			escrever(out, "%s\n", l)
+		if err := escreverAncoras(out, cabecas); err != nil {
+			return falha("escrever âncora: %v", err)
 		}
 	}
 	return 0
