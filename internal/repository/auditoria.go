@@ -71,7 +71,8 @@ func (r *Repositorio) LerAuditoria(ctx context.Context, fn func(auditoria.ContaL
 	}
 	defer linhas.Close()
 
-	i := 0 // índice em cabecas
+	i := 0                         // índice em cabecas
+	sinteticas := map[int64]bool{} // contas que não existem, mas têm entradas
 	var corrente *auditoria.ContaLida
 	fechar := func() error {
 		if corrente == nil {
@@ -111,12 +112,16 @@ func (r *Repositorio) LerAuditoria(ctx context.Context, fn func(auditoria.ContaL
 		}
 		l.TransferenciaID = tid
 		l.Transferencia.Motivo = tMotivo
+		// Um MAC de outro tamanho nunca é copiado para o array de 32 bytes: um
+		// valor maior seria truncado e poderia continuar parecendo válido. Vira
+		// um achado com posição, não um erro que impede de verificar o resto.
 		if len(anterior) != auditoria.TamanhoMAC || len(mac) != auditoria.TamanhoMAC {
-			return fmt.Errorf("auditoria: conta %d seq %d: MAC com tamanho inválido (%d/%d bytes)",
-				l.ContaID, l.Seq, len(anterior), len(mac))
+			l.Defeito = fmt.Sprintf("MAC com tamanho inválido (%d e %d bytes, esperado %d)",
+				len(anterior), len(mac), auditoria.TamanhoMAC)
+		} else {
+			copy(l.MACAnterior[:], anterior)
+			copy(l.MAC[:], mac)
 		}
-		copy(l.MACAnterior[:], anterior)
-		copy(l.MAC[:], mac)
 
 		if corrente == nil || corrente.ID != l.ContaID {
 			if err := fechar(); err != nil {
@@ -126,11 +131,17 @@ func (r *Repositorio) LerAuditoria(ctx context.Context, fn func(auditoria.ContaL
 				return err
 			}
 			if i >= len(cabecas) || cabecas[i].ID != l.ContaID {
-				return fmt.Errorf("auditoria: entrada da conta %d, que não existe", l.ContaID)
+				// Entrada de uma conta que não existe mais (apagada por quem
+				// controla o esquema e removeu as chaves estrangeiras). A conta
+				// sintética não tem cabeça, então o verificador acusa a diferença.
+				c := auditoria.ContaLida{ID: l.ContaID, SemEntrada: semEntrada[l.ContaID]}
+				sinteticas[l.ContaID] = true
+				corrente = &c
+			} else {
+				c := cabecas[i]
+				corrente = &c
+				i++
 			}
-			c := cabecas[i]
-			corrente = &c
-			i++
 		}
 		corrente.Entradas = append(corrente.Entradas, l)
 	}
@@ -154,7 +165,7 @@ func (r *Repositorio) LerAuditoria(ctx context.Context, fn func(auditoria.ContaL
 	}
 	var ausentes []int64
 	for id := range semEntrada {
-		if !existentes[id] {
+		if !existentes[id] && !sinteticas[id] {
 			ausentes = append(ausentes, id)
 		}
 	}

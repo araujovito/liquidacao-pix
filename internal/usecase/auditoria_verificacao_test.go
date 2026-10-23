@@ -270,14 +270,75 @@ func TestCabecaQueNaoApontaParaAUltimaEntradaEAcusada(t *testing.T) {
 	esperarSo(t, c.verificar(ch), auditoria.ProblemaCabeca)
 }
 
-func TestMACComBytesExtrasNaoPassaPelaLeitura(t *testing.T) {
-	c, _, beto, _ := cadeiaDeTres(t)
+// Um MAC com bytes a mais não pode ser truncado em silêncio na leitura (ficaria
+// parecendo válido) nem derrubar a verificação inteira: vira um achado com a
+// posição, e o resto da cadeia continua sendo conferido.
+func TestMACComBytesExtrasEAcusadoNaPosicao(t *testing.T) {
+	c, _, beto, ch := cadeiaDeTres(t)
 	c.adulterar(`ALTER TABLE auditoria DROP CONSTRAINT auditoria_mac_check`)
 	c.adulterar(`UPDATE auditoria SET mac = mac || decode('ff', 'hex')
 	             WHERE conta_id = $1 AND seq = 2`, beto)
-	err := c.repo.LerAuditoria(c.ctx, func(auditoria.ContaLida) error { return nil })
-	if err == nil {
-		t.Fatal("um MAC com bytes extras ficou invisível na conversão para array")
+	ps := c.verificar(ch)
+	var achou bool
+	for _, p := range ps {
+		if p.ContaID == beto && p.Seq == 2 && p.Tipo == auditoria.ProblemaMAC {
+			achou = true
+		}
+		if p.Tipo == auditoria.ProblemaElo {
+			t.Errorf("a entrada com defeito de formato não deveria gerar achado de elo: %v", p)
+		}
+	}
+	if !achou {
+		t.Fatalf("MAC com bytes extras não foi acusado em conta %d seq 2: %v", beto, ps)
+	}
+	// A entrada seguinte continua conferida: alterá-la ainda é acusado.
+	c.adulterar(`UPDATE auditoria SET valor_centavos = valor_centavos + 1 WHERE conta_id = $1 AND seq = 3`, beto)
+	var seq3 bool
+	for _, p := range c.verificar(ch) {
+		seq3 = seq3 || p.ContaID == beto && p.Seq == 3 && p.Tipo == auditoria.ProblemaMAC
+	}
+	if !seq3 {
+		t.Fatal("a entrada depois do defeito deixou de ser conferida")
+	}
+}
+
+// Conta apagada (com as chaves estrangeiras removidas) cujas entradas de
+// auditoria continuam no banco: achado com posição, não erro de leitura.
+func TestContaApagadaComEntradasRestantesEAcusada(t *testing.T) {
+	c := novoCenario(t)
+	ana, beto := c.conta("ana", 1_000), c.conta("beto", 0)
+	for _, v := range []domain.Centavos{100, 200} {
+		if _, err := c.liq.Liquidar(c.ctx, c.pedir(ana, beto, v).ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A segunda decisão perde a entrada de beto: a conta apagada fica com uma
+	// entrada e uma decisão sem entrada, e as duas coisas têm de chegar ao
+	// verificador numa única conta, não em duas.
+	c.adulterar(`DELETE FROM auditoria WHERE conta_id = $1 AND seq = 2`, beto)
+	for _, fk := range []string{
+		`ALTER TABLE auditoria DROP CONSTRAINT auditoria_conta_id_fkey`,
+		`ALTER TABLE lancamentos DROP CONSTRAINT lancamentos_conta_id_fkey`,
+		`ALTER TABLE transferencias DROP CONSTRAINT transferencias_pagador_id_fkey`,
+		`ALTER TABLE transferencias DROP CONSTRAINT transferencias_recebedor_id_fkey`,
+	} {
+		c.adulterar(fk)
+	}
+	c.adulterar(`DELETE FROM contas WHERE id = $1`, beto)
+
+	// As entradas são íntegras; o que denuncia é a conta ter sumido: ela não
+	// tem cabeça, e o verificador acusa a diferença uma única vez.
+	cabeca, semEntrada := 0, 0
+	for _, p := range c.verificar(c.liq.Auditoria) {
+		switch {
+		case p.ContaID == beto && p.Tipo == auditoria.ProblemaCabeca:
+			cabeca++
+		case p.ContaID == beto && p.Tipo == auditoria.ProblemaSemEntrada:
+			semEntrada++
+		}
+	}
+	if cabeca != 1 || semEntrada != 1 {
+		t.Fatalf("conta apagada %d: %d achados de cabeça e %d de decisão sem entrada, esperado 1 de cada", beto, cabeca, semEntrada)
 	}
 }
 

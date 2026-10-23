@@ -54,6 +54,10 @@ type Decisao struct {
 type EntradaLida struct {
 	Entrada
 	Transferencia Decisao
+	// Defeito descreve um problema de formato visto na leitura (um MAC que não
+	// tem 32 bytes, por exemplo). Quando preenchido, os MACs acima não são
+	// confiáveis e a entrada é acusada sem ser conferida.
+	Defeito string
 }
 
 // Cabeca é a posição e o MAC da última entrada, como a conta os guarda.
@@ -90,6 +94,7 @@ func (c *Chaveiro) VerificarConta(conta ContaLida, ancoras []Ancora) []Problema 
 	}
 
 	var anterior [TamanhoMAC]byte // a primeira entrada parte de zeros
+	anteriorConhecido := true     // falso depois de uma entrada com defeito de formato
 	esperado := int64(1)
 	for _, l := range conta.Entradas {
 		e := l.Entrada
@@ -100,10 +105,17 @@ func (c *Chaveiro) VerificarConta(conta ContaLida, ancoras []Ancora) []Problema 
 			achar(e.Seq, ProblemaSeq, "esperada a posição %d", esperado)
 		}
 		esperado = e.Seq + 1
-		if !bytes.Equal(e.MACAnterior[:], anterior[:]) {
+		if l.Defeito != "" {
+			// Os MACs desta entrada não foram lidos: não dá para comparar o elo
+			// dela nem o da seguinte sem inventar um achado a mais.
+			achar(e.Seq, ProblemaMAC, "%s", l.Defeito)
+			anteriorConhecido = false
+			continue
+		}
+		if anteriorConhecido && !bytes.Equal(e.MACAnterior[:], anterior[:]) {
 			achar(e.Seq, ProblemaElo, "mac_anterior não é o MAC da entrada anterior")
 		}
-		anterior = e.MAC
+		anterior, anteriorConhecido = e.MAC, true
 
 		switch err := c.Conferir(e); {
 		case err == nil:

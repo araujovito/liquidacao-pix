@@ -177,6 +177,17 @@ dezenas de milhares de mensagens. É o que o teste de carga vai medir.
   (API p50 2,9 → 3,1 ms), cauda pior (p99 8,1 → 27,4 ms, 163 descartes), e as duas
   rodadas reprovam o critério da carga sustentada. Uma rodada por versão: não dá
   para dizer quanto da cauda é da cadeia. Está em `docs/carga.md`.
+- **Revisão do Codex (6802573, cf80702, f6c89b8, 6f030df):** MAC com mais de 32
+  bytes era truncado ao ser copiado para o array e podia continuar válido; uma
+  decisão ligada a conta apagada sumia da verificação; chave de CPF ausente sem
+  marcador fingia apagamento; arquivo de âncoras podia ficar parcial com saída 0;
+  a demo calava falha ao restaurar a entrada. Revi: rodei as regressões com
+  Postgres, mutei cada correção (todas reprovam o teste novo), forcei
+  `/dev/full` na saída das âncoras (saída 2) e provoquei falha do Postgres na
+  restauração da etapa 8 (a demo sai 1 e diz qual entrada ficou alterada).
+  Acrescentei: um MAC de tamanho errado, ou entradas de conta que sumiu, agora
+  são **achados com posição** (o `auditar` saía 2 e perdia o resto da
+  verificação), e a entrada defeituosa não gera achado de elo a mais.
 - Caos com a trilha: ver "Estado atual". O banco de desenvolvimento anterior
   (112 mil transferências sem trilha) continua no volume `liquidacao-pix_postgres`
   e é acusado pelo verificador, como esperado.
