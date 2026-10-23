@@ -58,6 +58,10 @@ type EntradaLida struct {
 	// tem 32 bytes, por exemplo). Quando preenchido, os MACs acima não são
 	// confiáveis e a entrada é acusada sem ser conferida.
 	Defeito string
+	// MACLido indica que MAC tinha exatamente 32 bytes, mesmo quando outro
+	// campo da entrada tinha formato inválido. Preservá-lo evita inventar
+	// problemas de cabeça, âncora e elo na entrada seguinte.
+	MACLido bool
 }
 
 // Cabeca é a posição e o MAC da última entrada, como a conta os guarda.
@@ -106,10 +110,10 @@ func (c *Chaveiro) VerificarConta(conta ContaLida, ancoras []Ancora) []Problema 
 		}
 		esperado = e.Seq + 1
 		if l.Defeito != "" {
-			// Os MACs desta entrada não foram lidos: não dá para comparar o elo
-			// dela nem o da seguinte sem inventar um achado a mais.
+			// A entrada não pode ser conferida. Se o MAC atual era legível, ele
+			// ainda serve como valor opaco para cabeça, âncora e elo seguinte.
 			achar(e.Seq, ProblemaMAC, "%s", l.Defeito)
-			anteriorConhecido = false
+			anterior, anteriorConhecido = e.MAC, l.MACLido
 			continue
 		}
 		if anteriorConhecido && !bytes.Equal(e.MACAnterior[:], anterior[:]) {

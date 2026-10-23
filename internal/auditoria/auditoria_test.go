@@ -233,3 +233,32 @@ func TestChaveiroDoAmbiente(t *testing.T) {
 		})
 	}
 }
+
+func TestDefeitoNoMACAnteriorPreservaMACAtual(t *testing.T) {
+	ch, err := NovoChaveiro("v1", map[string][]byte{"v1": chaveDeTeste()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	motivo := "SALDO_INSUFICIENTE"
+	instante := time.Date(2026, 10, 22, 20, 0, 0, 123000, time.UTC)
+	e := Entrada{
+		ContaID: 7, Seq: 1, TransferenciaID: uuid.MustParse("11111111-2222-3333-4444-555555555555"),
+		Status: StatusRejeitada, Motivo: &motivo, PagadorID: 7, RecebedorID: 8,
+		ValorCentavos: 100, DecididaEm: instante,
+	}
+	if err := ch.Assinar(&e); err != nil {
+		t.Fatal(err)
+	}
+	decisao := Decisao{Existe: true, Status: e.Status, Motivo: e.Motivo, PagadorID: e.PagadorID,
+		RecebedorID: e.RecebedorID, Valor: e.ValorCentavos, FinalizadaEm: &instante}
+	conta := ContaLida{
+		ID: e.ContaID, Cabeca: Cabeca{Seq: e.Seq, MAC: e.MAC},
+		Entradas: []EntradaLida{{Entrada: e, Transferencia: decisao,
+			Defeito: "mac_anterior com tamanho inválido", MACLido: true}},
+	}
+	ancora := Ancora{ContaID: e.ContaID, Seq: e.Seq, MAC: e.MAC}
+	ps := ch.VerificarConta(conta, []Ancora{ancora})
+	if len(ps) != 1 || ps[0].Tipo != ProblemaMAC {
+		t.Fatalf("problemas = %v, esperado apenas o formato inválido do MAC anterior", ps)
+	}
+}

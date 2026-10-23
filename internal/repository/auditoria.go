@@ -115,11 +115,16 @@ func (r *Repositorio) LerAuditoria(ctx context.Context, fn func(auditoria.ContaL
 		// Um MAC de outro tamanho nunca é copiado para o array de 32 bytes: um
 		// valor maior seria truncado e poderia continuar parecendo válido. Vira
 		// um achado com posição, não um erro que impede de verificar o resto.
-		if len(anterior) != auditoria.TamanhoMAC || len(mac) != auditoria.TamanhoMAC {
+		anteriorValido := len(anterior) == auditoria.TamanhoMAC
+		l.MACLido = len(mac) == auditoria.TamanhoMAC
+		if !anteriorValido || !l.MACLido {
 			l.Defeito = fmt.Sprintf("MAC com tamanho inválido (%d e %d bytes, esperado %d)",
 				len(anterior), len(mac), auditoria.TamanhoMAC)
-		} else {
+		}
+		if anteriorValido {
 			copy(l.MACAnterior[:], anterior)
+		}
+		if l.MACLido {
 			copy(l.MAC[:], mac)
 		}
 
